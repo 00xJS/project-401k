@@ -1,4 +1,9 @@
+[build]
+  publish = "."
+
+# The price file is rebuilt by a scheduled Action and must never be served
+# stale from the CDN after a deploy.
 [[headers]]
-  for = "/data/sp500-prices.json"
+  for = "/data/spy-prices.json"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"

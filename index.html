@@ -4,75 +4,2348 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0a0d1c">
-    <title>Moved — S&amp;P 500 DCA Calculator</title>
-    <link rel="canonical" href="https://dca-btc-with-me.netlify.app/?asset=sp500">
-    <meta http-equiv="refresh" content="5; url=https://dca-btc-with-me.netlify.app/?asset=sp500">
+    <title>S&amp;P 500 DCA Calculator</title>
+    <meta name="description" content="Free S&amp;P 500 dollar-cost-averaging calculator. Replay a 401(k)-style contribution plan, with an employer match, on real SPY daily closes to see what it would be worth today.">
+    <meta property="og:title" content="S&amp;P 500 DCA Calculator">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
+    <!-- Pinned: the page relies on Chart.js 4 APIs (log axis, external tooltip), and
+         the bare URL would silently pick up a future major version. Same bytes as before. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+            integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+            crossorigin="anonymous"></script>
     <style>
-        :root { color-scheme: dark; }
-        * { box-sizing: border-box; }
+        /* ===== Observation Deck design tokens ===== */
+        :root {
+            color-scheme: dark;          /* native controls, scrollbars, date picker render dark */
+
+            /* surfaces */
+            --bg:           #0a0d1c;
+            --bg-raised:    #10142e;
+            --card:         #12163a;
+            --card-chrome:  #0c0f26;     /* header/toolbar strips */
+            --border:       rgba(255, 255, 255, 0.09);
+            --border-hover: rgba(255, 154, 68, 0.55);
+
+            /* text */
+            --text:  #e8eaf6;
+            --muted: #9ba1c5;
+            --faint: #7b81aa;            /* 5.12:1 on --bg, 4.63:1 on --card */
+
+            /* accents */
+            --accent:      #ff9a44;      /* links, primary emphasis */
+            --accent-deep: #e8792b;      /* hover / pressed */
+            --magenta:     #c23e8c;      /* secondary accent, sparingly */
+
+            /* semantic */
+            --live:         #3ddc84;     /* success / up / positive */
+            --warn:         #ffc24b;
+            --down:         #ff6b6b;     /* error / down / negative */
+            --series-blue:  #5b8def;     /* 2nd chart series */
+            --grid:         rgba(255, 255, 255, 0.07);      /* chart gridlines */
+            --fill-accent:  rgba(255, 154, 68, 0.12);       /* low-alpha area fills */
+
+            /* components */
+            --tag-bg:   rgba(255, 154, 68, 0.10);
+            --tag-text: #ffb877;
+            --shadow:   0 14px 40px rgba(0, 0, 0, 0.45);
+            --btn-ink:  #0a0d1c;         /* text on solid accent buttons */
+            --btc:      #f7931a;         /* the ₿ glyph ONLY — never UI accents */
+
+            /* type */
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", sans-serif;
+            --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+            /* shape */
+            --radius-card:    12px;
+            --radius-control: 8px;
+            --radius-pill:    999px;
+        }
+
+        /* ── Project-local tokens. Derived from the deck palette; the block above
+              stays verbatim so it can be diffed against the deck. ── */
+        :root {
+            --series-neutral: #c6c9de;   /* "Total invested" line. --muted failed the normal-vision
+                                            floor against the S&P blue (ΔE 12.3 < 15); this clears
+                                            it comfortably against the blue value line (ΔE 22.6). */
+            --live-wash:   rgba(61, 220, 132, 0.12);    /* --live @ 12% */
+            --down-wash:   rgba(255, 107, 107, 0.12);   /* --down @ 12% */
+            --accent-ring: rgba(255, 154, 68, 0.18);    /* focus halo */
+            --shadow-sm:   0 1px 6px rgba(0, 0, 0, 0.35);
+        }
+
+        /* `hidden` must beat component display rules, so a panel the script hides
+           (the chart if Chart.js fails, the history if the data can't load) stays hidden. */
+        [hidden] { display: none !important; }
+
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
         body {
+            font-family: var(--font-sans);
             margin: 0;
-            min-height: 100vh;
-            display: grid;
-            place-items: center;
             padding: 28px 20px;
-            background: #0a0d1c;
-            color: #e8eaf6;
-            line-height: 1.6;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
             -webkit-font-smoothing: antialiased;
         }
-        .card {
-            max-width: 520px;
-            padding: 30px 28px;
-            background: #12163a;
-            border: 1px solid rgba(255, 255, 255, 0.09);
-            border-radius: 12px;
-            box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+
+        /* ambient glow */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(900px 480px at 15% -10%, rgba(232, 121, 43, 0.10), transparent 60%),
+                radial-gradient(800px 480px at 90% 0%, rgba(194, 62, 140, 0.09), transparent 60%);
+        }
+
+        ::selection { background: var(--accent-deep); color: var(--btn-ink); }
+        a { color: var(--accent); }
+        a:hover { color: var(--accent-deep); }
+        a:focus-visible, button:focus-visible, summary:focus-visible, th.sortable:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 3px;
+            border-radius: 4px;
+        }
+
+        @keyframes deck-pulse {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.35; }
+        }
+
+        /* ── Page shell ──
+           The deck pattern for instruments: a transparent page carrying discrete
+           panels, rather than one big card holding everything. */
+        .page {
+            max-width: 1140px;
+            margin: 0 auto;
+        }
+
+        .panel {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-card);
+            box-shadow: var(--shadow);
+        }
+
+        .panel-title {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin: 0;
+        }
+
+        /* ── Masthead ── */
+        /* Centred, like the deck's other instruments: title and intro, then the
+           data chips, one above the other */
+        .masthead {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 18px;
             text-align: center;
         }
+        .masthead-id { max-width: 100%; }
+        .masthead-side {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            max-width: 100%;
+        }
+
         .kicker {
-            font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+            display: inline-block;
+            font-family: var(--font-mono);
             font-size: 10.5px;
             letter-spacing: 0.14em;
             text-transform: uppercase;
-            color: #7b81aa;
-            margin: 0 0 10px;
+            color: var(--faint);
+            text-decoration: none;
+            margin-bottom: 10px;
+            transition: color 0.2s ease;
         }
-        h1 { margin: 0 0 12px; font-size: 1.4rem; font-weight: 650; }
-        p { color: #9ba1c5; font-size: 14px; margin: 0 0 18px; }
-        a.btn {
-            display: inline-block;
-            padding: 10px 22px;
+        .kicker:hover { color: var(--accent); }
+
+        h1 {
+            color: var(--text);
+            margin: 0 0 8px;
+            font-size: 2.2rem;
+            font-weight: 650;
+            letter-spacing: -0.6px;
+            line-height: 1.15;
+        }
+
+        .lede {
+            color: var(--muted);
+            margin: 0 auto;
+            max-width: none;      /* no cap: the first sentence stays on one line whenever the page is wide enough */
+            text-wrap: pretty;    /* where it must wrap, don't strand the last word */
+            font-size: 14px;
+        }
+        .lede strong { color: var(--text); font-weight: 600; }
+
+        /* ── "How this works" collapsible ── */
+        .how {
+            margin: 0;
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-card);
+            font-size: 13px;
+            color: var(--muted);
+        }
+        .how > summary {
+            cursor: pointer;
+            padding: 10px 16px;
+            list-style: none;
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--faint);
+            transition: color 0.2s ease;
+        }
+        .how > summary::-webkit-details-marker { display: none; }
+        .how > summary::after {
+            content: '+';
+            float: right;
+            font-size: 14px;
+            line-height: 1.1;
+        }
+        .how[open] > summary::after { content: '\2212'; }   /* − */
+        .how > summary:hover { color: var(--accent); }
+
+        .how-body { padding: 2px 18px 15px; }
+        .how-body h3 {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--faint);
+            margin: 12px 0 6px;
+        }
+        .how-body ul { margin: 0; padding-left: 18px; line-height: 1.6; }
+        .how-body li { margin-bottom: 7px; }
+        .how-body li:last-child { margin-bottom: 0; }
+        .how-body strong { color: var(--text); font-weight: 600; }
+
+        /* ── Status chip ── */
+        .chip-row {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        /* static provenance chip — no state, so no status dot */
+        .chip--info { color: var(--faint); }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-pill);
+            background: var(--bg-raised);
+            color: var(--muted);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            max-width: 100%;
+            text-align: center;
+            line-height: 1.7;
+        }
+        .chip .dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--faint);
+            flex-shrink: 0;
+        }
+        .chip strong {
+            color: var(--accent);
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .chip.ok   { color: var(--live); }
+        .chip.ok   .dot { background: var(--live); box-shadow: 0 0 8px var(--live); animation: deck-pulse 2.4s ease-in-out infinite; }
+        .chip.warn { color: var(--warn); }
+        .chip.warn .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+        .chip.down { color: var(--down); }
+        .chip.down .dot { background: var(--down); box-shadow: 0 0 8px var(--down); }
+
+        /* loading state swaps the dot for a spinner */
+        .chip .spin           { display: none; }
+        .chip.loading .spin   { display: inline-block; }
+        .chip.loading .dot    { display: none; }
+
+        /* ── Spinner ── */
+        .spin {
+            width: 12px; height: 12px;
+            border: 2px solid currentColor;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: rotate 0.75s linear infinite;
+            flex-shrink: 0;
+        }
+        @keyframes rotate { to { transform: rotate(360deg); } }
+
+        /* ── Buttons ──
+           There is no solid primary button any more: results are live, so there is
+           nothing to "run". */
+        button {
+            font-family: var(--font-sans);
+            font-size: 14px;
+            color: inherit;
+            background: none;
+            border: none;
+            padding: 0;
+            cursor: pointer;
+        }
+        button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        .btn-ghost {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-pill);
+            padding: 6px 12px;
+            white-space: nowrap;
+            transition: color 0.2s ease, border-color 0.2s ease;
+        }
+        .btn-ghost:hover:not(:disabled) { color: var(--text); border-color: var(--border-hover); }
+        .btn-ghost.is-done { color: var(--live); border-color: currentColor; }
+
+        /* ── Workspace: the plan on the left, live results on the right ── */
+        .workspace {
+            display: grid;
+            grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
+            grid-template-areas:
+                "controls hero"
+                "controls tiles"
+                "controls chart"
+                "controls effect"
+                "controls note";
+            gap: 16px 20px;
+            align-items: start;
+            margin-top: 18px;
+        }
+
+        /* ── Controls ── */
+        .controls {
+            grid-area: controls;
+            position: sticky;
+            top: 16px;
+            padding: 18px 18px 2px;
+        }
+        .controls-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .ctl { border: 0; margin: 0 0 18px; padding: 0; min-width: 0; }
+
+        label, .ctl-label {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--faint);
+            margin-bottom: 8px;
+            padding: 0;
+            display: block;
+        }
+
+        input[type="date"], input[type="number"] {
+            font-family: var(--font-sans);
+            font-size: 14px;
+            color: var(--text);
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-control);
+            padding: 9px 12px;
+            width: 100%;
+            font-variant-numeric: tabular-nums;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        input[type="date"]:hover, input[type="number"]:hover { border-color: var(--border-hover); }
+        input[type="date"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-ring);
+        }
+        input:invalid { border-color: var(--down); }
+
+        /* $-prefixed money fields */
+        .money { position: relative; }
+        .money > span {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--faint);
+            pointer-events: none;
+        }
+        .money input { padding-left: 24px; }
+
+        /* Quick start dates: 1, 3, 5 and 10 years back, or SPY's full history */
+        .presets {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+        .preset, .seg-btn {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            color: var(--muted);
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-control);
+            padding: 7px 0;
+            text-align: center;
+            transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+        }
+        .preset:hover, .seg-btn:hover { color: var(--text); border-color: var(--border-hover); }
+        .preset[aria-pressed="true"], .seg-btn[aria-pressed="true"] {
+            color: var(--tag-text);
+            background: var(--tag-bg);
+            border-color: var(--border-hover);
+        }
+
+        /* Start-date timeline. The lit stretch — thumb to today — is the window
+           you are investing over; --pct is set from JS as the thumb moves. */
+        .timeline {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 22px;
+            margin: 10px 0 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .timeline::-webkit-slider-runnable-track {
+            height: 4px;
+            border-radius: var(--radius-pill);
+            background: linear-gradient(to right, var(--border) var(--pct, 0%), var(--accent) var(--pct, 0%));
+        }
+        .timeline::-moz-range-track {
+            height: 4px;
+            border-radius: var(--radius-pill);
+            background: linear-gradient(to right, var(--border) var(--pct, 0%), var(--accent) var(--pct, 0%));
+        }
+        .timeline::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            margin-top: -7px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 3px solid var(--card);
+            box-shadow: 0 0 0 1px var(--border-hover);
+        }
+        .timeline::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 3px solid var(--card);
+            box-shadow: 0 0 0 1px var(--border-hover);
+        }
+        .timeline:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+        .timeline-ends {
+            display: flex;
+            justify-content: space-between;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--faint);
+        }
+
+        /* Frequency: native radios presented as a segmented control */
+        .segmented {
+            display: grid;
+            grid-auto-flow: column;
+            grid-auto-columns: minmax(0, 1fr);
+            gap: 4px;
+            padding: 4px;
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-control);
+        }
+        .segmented label {
+            position: relative;
+            margin: 0;
+            font: inherit;
+            letter-spacing: normal;
+            text-transform: none;
+            color: inherit;
+        }
+        .segmented input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+        .segmented span {
+            display: block;
+            padding: 7px 4px;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--muted);
+            transition: color 0.2s ease, background 0.2s ease;
+        }
+        .segmented label:hover span { color: var(--text); }
+        .segmented input:checked + span {
+            color: var(--text);
+            background: var(--card);
+            box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--border);
+        }
+        .segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        /* ── Error ── */
+        #error:not(:empty) {
+            color: var(--down);
+            font-size: 13px;
+            padding: 10px 12px;
+            margin: -6px 0 18px;
+            background: var(--down-wash);
+            border: 1px solid rgba(255, 107, 107, 0.30);  /* --down @ 30% */
+            border-radius: var(--radius-control);
+        }
+
+        /* ── Tables ── */
+        .table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            max-width: 100%;
+            margin-top: 22px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-card);
+        }
+
+        table {
+            width: 100%;
+            min-width: 100%;
+            border-collapse: collapse;
+            font-size: 13.5px;
+        }
+
+        th, td {
+            padding: 10px 14px;
+            text-align: right;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        th:first-child, td:first-child { text-align: left; }
+        tbody tr:last-child td { border-bottom: none; }
+
+        th {
+            background: var(--card-chrome);
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--faint);
+        }
+
+        td { color: var(--muted); }
+        td:first-child { color: var(--text); }
+
+        tbody tr:hover { background: var(--bg-raised); }
+
+        /* secondary detail inside a metric label */
+        .sub {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--faint);
+        }
+
+        .result-note {
+            grid-area: note;
+            margin: 0;
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--faint);
+        }
+
+        /* Results hold their last render, dimmed, while new data loads —
+           no skeleton flash, no layout jump. */
+        .result-area { transition: opacity 0.2s ease; }
+        .workspace.is-stale .result-area { opacity: 0.45; }
+        .workspace.is-empty .result-area:not(.hero) { display: none; }
+        /* history sits outside the workspace, so it follows as a sibling */
+        .history { transition: opacity 0.2s ease; }
+        .workspace.is-stale ~ .history { opacity: 0.45; }
+
+        /* ── Hero: the one number the page leads with ── */
+        .hero {
+            grid-area: hero;
+            padding: 20px 22px 18px;
+            background:
+                radial-gradient(520px 180px at 100% 0%, var(--tag-bg), transparent 70%),
+                var(--card);
+        }
+        .hero-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+        .hero-value {
+            margin: 6px 0 10px;
+            font-variant-numeric: tabular-nums;   /* updates live: proportional digits jitter */
+            font-size: clamp(2.3rem, 5.2vw, 3.4rem);
+            font-weight: 650;
+            letter-spacing: -0.02em;
+            line-height: 1.05;
+            color: var(--text);
+            overflow-wrap: anywhere;
+        }
+        .hero-delta {
+            display: inline-flex;
+            font-variant-numeric: tabular-nums;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 2px 8px;
+            padding: 4px 12px;
+            border-radius: var(--radius-pill);
             font-size: 14px;
             font-weight: 600;
-            color: #0a0d1c;
-            background: #ff9a44;
-            border-radius: 8px;
-            text-decoration: none;
-            transition: background 0.2s ease;
         }
-        a.btn:hover { background: #e8792b; }
-        .note { font-size: 12px; color: #7b81aa; margin: 18px 0 0; }
-        .note a { color: #ff9a44; }
-        @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+        .hero-delta.up    { color: var(--live); background: var(--live-wash); }
+        .hero-delta.down  { color: var(--down); background: var(--down-wash); }
+        .hero-delta:empty { display: none; }
+        .hero-story { margin: 12px 0 0; max-width: 62ch; font-size: 14px; color: var(--muted); }
+        .hero-story strong { color: var(--text); font-weight: 600; }
+
+        /* ── KPI tiles ── */
+        .tiles {
+            grid-area: tiles;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .stat {
+            min-width: 0;
+            padding: 14px 16px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-card);
+        }
+        .stat .label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--faint);
+        }
+        .stat .value {
+            margin-top: 6px;
+            font-variant-numeric: tabular-nums;
+            font-size: 1.35rem;
+            font-weight: 650;
+            line-height: 1.2;
+            color: var(--text);
+            overflow-wrap: anywhere;
+        }
+        .stat .value.up   { color: var(--live); }
+        .stat .value.down { color: var(--down); }
+        .stat .value small { font-size: 12px; font-weight: 600; color: var(--muted); }
+        .stat-sub { margin-top: 4px; font-size: 12px; line-height: 1.45; color: var(--faint); }
+
+        /* ── The averaging effect ── */
+        .effect { grid-area: effect; padding: 18px 20px; }
+        .effect-rows { display: grid; gap: 14px; margin: 14px 0; }
+        .effect-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: baseline;
+            gap: 6px 12px;
+        }
+        .effect-name { font-size: 13px; color: var(--muted); }
+        .effect-val  { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
+        .bar {
+            grid-column: 1 / -1;
+            height: 10px;
+            border-radius: 4px;
+            background: var(--bg-raised);
+            overflow: hidden;
+        }
+        .bar > i {
+            display: block;
+            height: 100%;
+            width: 0;
+            border-radius: 0 4px 4px 0;
+            background: var(--c, var(--accent));
+            transition: width 0.4s ease;
+        }
+        .effect-note { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
+        .effect-note strong { color: var(--text); font-weight: 600; }
+
+        /* ── Purchase history ── */
+        .history { margin-top: 20px; }
+        .history > summary {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 4px 12px;
+            padding: 15px 18px;
+            cursor: pointer;
+            list-style: none;
+        }
+        .history > summary::-webkit-details-marker { display: none; }
+        .history > summary::after {
+            content: '+';
+            margin-left: auto;
+            font-family: var(--font-mono);
+            color: var(--faint);
+        }
+        .history[open] > summary::after { content: '\2212'; }   /* − */
+        .history > summary:hover .panel-title { color: var(--accent); }
+        .history-body { padding: 0 18px 18px; }
+        .history-tools {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: var(--faint);
+        }
+        /* Contained scroll with a sticky header. A 13-year weekly run is ~700 rows,
+           which used to make the page ~30,000px tall. */
+        .table-wrapper.is-scroll { max-height: 520px; overflow: auto; margin-top: 0; }
+        .is-scroll th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            border-bottom: none;
+            box-shadow: inset 0 -1px 0 var(--border);   /* collapsed borders don't stick */
+        }
+
+        .num      { font-variant-numeric: tabular-nums; }
+        .positive { color: var(--live); font-weight: 600; font-variant-numeric: tabular-nums; }
+        .negative { color: var(--down); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+        /* ── Sortable columns ── */
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 24px;
+            transition: color 0.2s ease;
+        }
+        th.sortable:hover { color: var(--accent); background: var(--bg-raised); }
+        th.sortable::after {
+            content: '⇅';
+            position: absolute;
+            right: 7px;
+            opacity: 0.4;
+            font-size: 11px;
+        }
+        th.sortable.asc::after  { content: '▲'; opacity: 1; color: var(--accent); }
+        th.sortable.desc::after { content: '▼'; opacity: 1; color: var(--accent); }
+
+        /* ── Chart ── */
+        .chart-panel { grid-area: chart; padding: 16px 18px 12px; }
+        .chart-head {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px 20px;
+            margin-bottom: 12px;
+        }
+        /* The readout doubles as the legend: a line key beside each series name,
+           values leading. It shows the latest close, or wherever the pointer is. */
+        .readout-date { display: block; margin-bottom: 6px; }
+        .readout { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+        .readout b { margin-right: 4px; color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+        .readout b.up   { color: var(--live); }
+        .readout b.down { color: var(--down); }
+        .key {
+            display: inline-block;
+            width: 14px;
+            height: 2px;
+            margin-right: 7px;
+            vertical-align: middle;
+            border-radius: 2px;
+            background: var(--c, var(--muted));
+        }
+        .seg-sm { display: flex; gap: 4px; }
+        .seg-sm .seg-btn { padding: 5px 10px; font-size: 10.5px; }
+        .chart-box { position: relative; height: 340px; }
+        canvas { max-width: 100%; }
+
+        /* ── Footer ── */
+        .footer {
+            text-align: center;
+            margin-top: 32px;
+            padding-top: 18px;
+            border-top: 1px solid var(--border);
+            font-size: 13px;
+            color: var(--faint);
+        }
+        .footer p { margin: 0 0 8px; }
+        .footer a { color: var(--accent); text-decoration: none; }
+        .footer a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+        .disclaimer {
+            font-size: 12px;
+            color: var(--faint);
+            margin-top: 14px;
+            padding: 12px 14px;
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent-deep);
+            border-radius: var(--radius-control);
+            text-align: left;
+            line-height: 1.6;
+        }
+        .disclaimer strong { color: var(--warn); }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            /* One column. The hero sits directly above the plan, so on a phone the
+               number visibly moves while the start date is being dragged. */
+            .workspace {
+                grid-template-columns: minmax(0, 1fr);
+                grid-template-areas: "hero" "controls" "tiles" "chart" "effect" "note";
+            }
+            .controls { position: static; }
+        }
+
+        @media (max-width: 620px) {
+            body { padding: 16px 16px 28px; }
+            h1 { font-size: 1.6rem; }
+            .chip { font-size: 10px; }
+            .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+            .stat { padding: 12px 13px; }
+            .stat .value { font-size: 1.15rem; }
+            .hero { padding: 18px 16px 16px; }
+            .chart-panel { padding: 14px 12px 10px; }
+            .chart-box { height: 260px; }
+            .history > summary, .history-body { padding-left: 14px; padding-right: 14px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation: none !important; transition: none !important; }
+        }
     </style>
 </head>
 <body>
-    <div class="card">
-        <p class="kicker">Observation Deck / Project 401k</p>
-        <h1>This calculator has moved</h1>
+<div class="page">
+
+    <!-- Title, chips and copy below are rewritten by applyAsset() -->
+    <header class="masthead">
+        <div class="masthead-id">
+            <a class="kicker" href="https://observation-deck.netlify.app/">Observation Deck / Project 401k</a>
+            <h1 id="pageTitle">S&amp;P 500 DCA Calculator</h1>
+            <p class="lede">
+                <strong>Dollar-cost averaging</strong> — a fixed dollar amount, bought on a fixed schedule —
+                replayed against <span id="ledeAsset">real SPY closing prices</span>. A backtest, not a forecast.<br>
+                Set a <strong>start date</strong>, how <strong>often</strong> you contribute, how <strong>much</strong> and any <strong>employer match</strong> &mdash; every figure updates as you go.
+            </p>
+        </div>
+
+        <div class="masthead-side">
+            <!-- Live status chip: latest close + data freshness -->
+            <div class="chip-row">
+                <div id="dataStatus" class="chip loading" role="status">
+                    <span class="spin" aria-hidden="true"></span>
+                    <span class="dot" aria-hidden="true"></span>
+                    <span id="statusText">Loading price data&hellip;</span>
+                </div>
+                <div class="chip chip--info">
+                    <span id="coverageText">&nbsp;</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <details class="how">
+        <summary>How this works</summary>
+        <div class="how-body">
+
+            <h3>The simulation</h3>
+            <ul>
+                <li><strong>Employer match</strong> is a flat dollar amount added to every purchase, like a
+                    401(k) match. Total invested, ROI and annualised return count it as money invested, so
+                    they show what the account earned, not the return on your own contributions alone.</li>
+                <li><strong>&ldquo;Monthly&rdquo; means every 30 days</strong>, not the same date each
+                    calendar month — about 12.2 buys a year, and the date drifts earlier over time.
+                    Weekly is 7 days, bi-weekly is 14.</li>
+                <li>Each purchase fills at that <strong>UTC day&rsquo;s closing price</strong> — the most
+                    recent close on or before the date, never a later one. Intraday highs and lows are
+                    ignored.</li>
+                <li><strong>No fees, spreads, or taxes.</strong> A platform charging ~1% a buy would
+                    leave you ~1% fewer shares every time, so on
+                    costs alone every figure here is optimistic. Nothing is ever sold — profit is
+                    unrealised.</li>
+                <li>Buying continues <strong>through today</strong>, so an earlier start date also means
+                    more total dollars invested. Compare runs on ROI, not on profit.</li>
+            </ul>
+
+            <h3>The price data</h3>
+            <ul>
+                <li>Purchases fill at <strong>SPY&rsquo;s actual closing price</strong> — what the SPDR
+                    S&amp;P 500 ETF really traded at, adjusted for share splits.</li>
+                <li><strong>Dividends are left out entirely</strong> &mdash; neither reinvested nor counted
+                    as cash. SPY pays roughly 1&ndash;2% a year, so every figure here understates what a
+                    fund that reinvests its dividends would have earned.</li>
+                <li>SPY&rsquo;s <strong>0.09% expense ratio</strong> is already reflected in its price,
+                    so there is nothing further to deduct for it.</li>
+            </ul>
+
+            <h3>Reading the results</h3>
+            <ul>
+                <li><strong>Average Cost per <span class="asset-unit">share</span></strong> lands below
+                    the average price you actually paid — a fixed dollar amount buys more
+                    shares when the price is low. That gap is
+                    dollar-cost averaging doing its job.</li>
+                <li><strong>Return on Investment</strong> is the total across the whole duration.
+                    <strong>Annualised Return</strong> is the money-weighted rate (XIRR) — it accounts
+                    for when each contribution actually went in, so it is the figure to compare runs
+                    of different lengths on. Don&rsquo;t divide ROI by the number of years.</li>
+                <li><strong>Portfolio Value</strong> prices your whole stack at the most recent daily
+                    close. In the history table, <strong>Value on Date</strong> prices it at that
+                    row&rsquo;s date instead — which is why the last row and the summary differ.</li>
+            </ul>
+
+        </div>
+    </details>
+
+    <div class="workspace is-stale" id="workspace">
+
+        <!-- ── The plan ── -->
+        <form id="dcaForm" class="panel controls" novalidate>
+            <div class="controls-head">
+                <h2 class="panel-title">Your plan</h2>
+                <button type="button" class="btn-ghost" id="shareBtn">Copy link</button>
+            </div>
+
+            <div class="ctl">
+                <!-- min is SPY's first trading day (1993-01-29); max and the default
+                     value are set in initPage() -->
+                <label for="startDate">Start date</label>
+                <div class="presets" role="group" aria-label="Quick start dates">
+                    <button type="button" class="preset" data-years="1"   aria-pressed="false">1Y</button>
+                    <button type="button" class="preset" data-years="3"   aria-pressed="false">3Y</button>
+                    <button type="button" class="preset" data-years="5"   aria-pressed="false">5Y</button>
+                    <button type="button" class="preset" data-years="10"  aria-pressed="false">10Y</button>
+                    <button type="button" class="preset" data-years="max" aria-pressed="false">Max</button>
+                </div>
+                <input type="date" id="startDate" required min="1993-01-29">
+                <input type="range" id="startSlider" class="timeline" min="0" max="1" step="1" value="0"
+                       aria-label="Start date: drag through history">
+                <div class="timeline-ends" aria-hidden="true"><span id="timelineMin">&nbsp;</span><span>Today</span></div>
+            </div>
+
+            <fieldset class="ctl">
+                <legend class="ctl-label">Frequency</legend>
+                <div class="segmented">
+                    <label><input type="radio" name="frequency" value="7"><span>Weekly</span></label>
+                    <label><input type="radio" name="frequency" value="14"><span>Bi-weekly</span></label>
+                    <label><input type="radio" name="frequency" value="30"><span>Monthly</span></label>
+                </div>
+            </fieldset>
+
+            <div class="ctl">
+                <label for="amount">Your contribution (USD)</label>
+                <div class="money">
+                    <span aria-hidden="true">$</span>
+                    <input type="number" id="amount" required min="1" step="0.01" value="100" inputmode="decimal">
+                </div>
+            </div>
+            <!-- 401k-style employer match; shown only for assets that opt in -->
+            <div class="ctl" id="employerGroup">
+                <label for="employerAmount">Employer match (USD)</label>
+                <div class="money">
+                    <span aria-hidden="true">$</span>
+                    <input type="number" id="employerAmount" min="0" step="0.01" value="0" placeholder="0" inputmode="decimal">
+                </div>
+            </div>
+
+            <div id="error" role="alert"></div>
+        </form>
+
+        <!-- ── Live results ── -->
+        <section class="panel hero result-area" aria-labelledby="heroLabel">
+            <div class="hero-label">
+                <span class="panel-title" id="heroLabel">Portfolio value</span>
+                <span class="sub" id="heroAsOf"></span>
+            </div>
+            <div class="hero-value" id="heroValue">&mdash;</div>
+            <div class="hero-delta" id="heroDelta"></div>
+            <p class="hero-story" id="heroStory">Loading price data&hellip;</p>
+            <p class="visually-hidden" id="srSummary" aria-live="polite"></p>
+        </section>
+
+        <section class="tiles result-area" id="tiles" aria-label="Key figures"></section>
+
+        <section class="panel chart-panel result-area" id="chartPanel" aria-label="Portfolio value over time">
+            <div class="chart-head">
+                <div>
+                    <span class="sub readout-date" id="readoutDate">&nbsp;</span>
+                    <div class="readout" id="readout"></div>
+                </div>
+                <div class="seg-sm" role="group" aria-label="Chart scale">
+                    <button type="button" class="seg-btn" data-scale="linear"      aria-pressed="true">Linear</button>
+                    <button type="button" class="seg-btn" data-scale="logarithmic" aria-pressed="false">Log</button>
+                </div>
+            </div>
+            <div class="chart-box">
+                <canvas id="dcaChart" role="img"
+                        aria-label="Portfolio value and total invested over time. Every value is also in the purchase history table."></canvas>
+            </div>
+        </section>
+
+        <section class="panel effect result-area" aria-labelledby="effectTitle">
+            <h2 class="panel-title" id="effectTitle">The averaging effect</h2>
+            <div class="effect-rows">
+                <div class="effect-row">
+                    <span class="effect-name">Your average cost per <span class="asset-unit">share</span></span>
+                    <span class="effect-val" id="effCost">&mdash;</span>
+                    <div class="bar" aria-hidden="true"><i id="effCostBar"></i></div>
+                </div>
+                <div class="effect-row">
+                    <span class="effect-name">Average price on your purchase dates</span>
+                    <span class="effect-val" id="effPrice">&mdash;</span>
+                    <div class="bar" aria-hidden="true"><i id="effPriceBar"></i></div>
+                </div>
+            </div>
+            <p class="effect-note" id="effNote"></p>
+        </section>
+
+        <p class="result-note">
+            One historical window, not a forecast. A short window mostly measures where the
+            price happened to be when you started &mdash; the case for DCA rests on
+            horizons measured in years. Drag the start date to watch the average cost move.
+            Dividends, fees, spreads and taxes are not included &mdash; figures are price return only.
+        </p>
+    </div><!-- /.workspace -->
+
+    <details class="panel history" id="historyPanel">
+        <summary>
+            <span class="panel-title">Purchase history</span>
+            <span class="sub" id="historyCount"></span>
+        </summary>
+        <div class="history-body">
+            <div class="history-tools">
+                <span>Click a column to sort. <em>Value on Date</em> prices the stack at that row&rsquo;s close.</span>
+                <button type="button" class="btn-ghost" id="csvBtn">Download CSV</button>
+            </div>
+            <div id="tableWrapper" class="table-wrapper is-scroll">
+                <table id="historyTable">
+                    <thead>
+                        <tr>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="n">#</th>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="date">Date</th>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="price"><span class="asset-price-label">SPY</span> Price</th>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="unitsBought"><span class="asset-unit-h">Shares</span> Bought</th>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="totalUnits">Total <span class="asset-unit-h">Shares</span></th>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="totalInvested">Total Invested</th>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="portfolioValue">Value on Date</th>
+                            <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="profit">Profit / Loss</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </details>
+
+    <footer class="footer">
         <p>
-            The S&amp;P 500 DCA calculator is now part of the combined DCA Analysis tool,
-            alongside the Bitcoin version — same simulation, one place, and you can switch
-            between the two.
+            <a href="https://observation-deck.netlify.app/">Observation Deck</a> &nbsp;&middot;&nbsp;
+            JS &nbsp;&middot;&nbsp;
+            <a href="https://github.com/00xJS/project-401k">GitHub</a>
         </p>
-        <a class="btn" href="https://dca-btc-with-me.netlify.app/?asset=sp500">Open the S&amp;P 500 calculator</a>
-        <p class="note">
-            Redirecting in five seconds. Source now lives in
-            <a href="https://github.com/00xJS/dca-analysis">00xJS/dca-analysis</a>.
-        </p>
-    </div>
+        <p id="sourceCredit"></p>
+        <div class="disclaimer">
+            <strong>Not financial advice.</strong> This tool is for educational and informational purposes only.
+            Past performance does not guarantee future results, and the figures here exclude dividends, fees and taxes. <span id="assetRisk">Equity markets can
+            fall as well as rise</span> — always conduct your own research before making any investment decisions.
+        </div>
+    </footer>
+
+</div><!-- /.page -->
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+const CACHE_TTL  = 24 * 60 * 60 * 1000;  // 24 hours in ms
+
+/**
+ * Everything asset-specific. The simulation itself is asset-agnostic — the price
+ * file's schema is {generated, source, count, prices[{ts, price}]} with ts in UNIX
+ * seconds — so the engine never needs to know what it is pricing.
+ */
+const ASSETS = {
+    spy: {
+        name:        'S&P 500',
+        // Unit vocabulary. "per share" needs the singular, "0.42 shares" the plural,
+        // and a column header wants it capitalised — one token can't serve all three
+        // without producing "shares Price" or "per shares".
+        unitSingular: 'share',
+        unitPlural:   'shares',
+        unitHeader:   'Shares',
+        priceLabel:   'SPY',             // the "___ Price" column
+        ticker:       'SPY',             // plain text: CSV header and the summary sentence
+        staleAfterDays: 5,               // weekday data: a weekend plus a holiday stays green
+        decimals:    6,                  // fractional shares, to 6dp
+        title:       'S&amp;P 500 DCA Calculator',
+        docTitle:    'S&P 500 DCA Calculator',
+        mark:        'SPY ',             // status-chip prefix
+        dataUrl:     '/data/spy-prices.json',
+        cachePrefix: 'spy_dca_v1',
+        minDate:     '1993-01-29',       // SPY's first trading day
+        defaultFreq: '14',               // bi-weekly matches most US payroll cycles
+        lede:        'real SPY closing prices',
+        coverage:    'SPY daily closes',
+        risk:        'Equity markets can fall as well as rise',
+        employer:    true,               // 401k-style match
+        seriesVar:   '--series-blue',
+        credit:      'Price data: <a href="https://finance.yahoo.com/quote/SPY/" target="_blank" rel="noopener">Yahoo Finance (SPY)</a> '
+                   + '(daily closes &bull; rebuilt each weekday via GitHub Actions)',
+    },
+};
+
+/** The one asset this page prices. Everything reads it through asset(). */
+let assetKey = 'spy';
+const asset  = () => ASSETS[assetKey];
+const cacheKey = () => `${asset().cachePrefix}_${new Date().toISOString().split('T')[0]}`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOM references
+// ─────────────────────────────────────────────────────────────────────────────
+const form          = document.getElementById('dcaForm');
+const workspace     = document.getElementById('workspace');
+const startInput    = document.getElementById('startDate');
+const startSlider   = document.getElementById('startSlider');
+const amountInput   = document.getElementById('amount');
+const employerInput = document.getElementById('employerAmount');
+const errorDiv      = document.getElementById('error');
+const heroValueEl   = document.getElementById('heroValue');
+const heroDeltaEl   = document.getElementById('heroDelta');
+const heroStoryEl   = document.getElementById('heroStory');
+const heroAsOfEl    = document.getElementById('heroAsOf');
+const srSummaryEl   = document.getElementById('srSummary');
+const tilesEl       = document.getElementById('tiles');
+const chartCanvas   = document.getElementById('dcaChart');
+const chartPanel    = document.getElementById('chartPanel');
+const readoutDateEl = document.getElementById('readoutDate');
+const readoutEl     = document.getElementById('readout');
+const historyPanel  = document.getElementById('historyPanel');
+const historyCount  = document.getElementById('historyCount');
+const tableBody     = document.querySelector('#historyTable tbody');
+const dataStatusEl  = document.getElementById('dataStatus');
+const statusTextEl  = document.getElementById('statusText');
+let   dcaChart;
+let   chartBuiltFor = '';           // "<asset>|<scale>" the live Chart instance was built for
+let   chartScale    = 'linear';     // 'linear' | 'logarithmic' — a per-viewer preference
+try { if (localStorage.getItem('dca_chart_scale') === 'logarithmic') chartScale = 'logarithmic'; } catch (_) {}
+
+/** Plain-English cadence for the headline sentence. "Monthly" is every 30 days. */
+const FREQ_PHRASE = { 7: 'every week', 14: 'every two weeks', 30: 'every 30 days' };
+
+// In-memory cache, keyed by asset, so a re-run never refetches
+const sessionData = {};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deck-chart-theme — call once before creating charts. Dark is the only theme,
+// so the tokens are read at build time and never need a matchMedia listener.
+// ─────────────────────────────────────────────────────────────────────────────
+function deckChartTheme() {
+    const css = getComputedStyle(document.documentElement);
+    const v = (n) => css.getPropertyValue(n).trim();
+    Chart.defaults.color = v('--muted');
+    Chart.defaults.borderColor = v('--grid');
+    Chart.defaults.font.family = v('--font-sans');
+    return {
+        accent: v('--accent'), accentDeep: v('--accent-deep'), magenta: v('--magenta'),
+        live: v('--live'), warn: v('--warn'), down: v('--down'),
+        text: v('--text'), muted: v('--muted'), faint: v('--faint'),
+        border: v('--border'),
+        grid: v('--grid'), fill: v('--fill-accent'),
+        tooltipBg: v('--bg-raised'),
+        surface: v('--card'), neutral: v('--series-neutral'),
+        liveWash: v('--live-wash'), downWash: v('--down-wash'),
+        series: [v('--accent'), v('--series-blue'), v('--live'), v('--magenta'), v('--warn'), v('--down')],
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Returns today's date as YYYY-MM-DD */
+function todayStr() {
+    return new Date().toISOString().split('T')[0];
+}
+
+/** Format a number as USD. `style:'currency'` puts the sign OUTSIDE the symbol
+ *  (-$1,234.56), where hand-prefixing "$" would give the wrong "$-1,234.56". */
+function fmtUSD(n) {
+    return USD2.format(Number(n));   // same output as before; the formatter is built once
+}
+
+/** Format an asset-unit quantity to the asset's decimals (6dp for shares) */
+function fmtUnits(n) {
+    return Number(n).toFixed(asset().decimals);
+}
+
+// Intl formatters are costly to construct and the start-date slider can re-render
+// every frame, so each one is built once. All keep the sign outside the symbol.
+const USD2  = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const USD0  = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const USD2S = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' });
+const USD0S = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0, signDisplay: 'exceptZero' });
+const USDC  = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1 });
+const PCT2  = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' });
+const DATE_LONG = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+const DATE_MY   = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+const DATE_MD   = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+/** Headline money: whole dollars from $1,000 up, cents below that. The history
+ *  table and CSV keep full cents. */
+function fmtMoney(n)   { return Math.abs(n) >= 1000 ? USD0.format(n) : USD2.format(n); }
+/** Same, always signed: "+$4,458,187", "-$12.49" */
+function fmtSigned(n)  { return Math.abs(n) >= 1000 ? USD0S.format(n) : USD2S.format(n); }
+/** Axis ticks: "$500", "$1K", "$4.5M" */
+function fmtCompact(n) { return USDC.format(n); }
+/** Signed percentage with separators: "+6,377.95%" */
+function fmtPct(n)     { return `${PCT2.format(n)}%`; }
+/** A plan amount as the visitor typed it: "$100", "$37.50" */
+function fmtAmount(n)  { return Number.isInteger(n) ? USD0.format(n) : USD2.format(n); }
+
+/** 'YYYY-MM-DD' → "Apr 28, 2013". Dates are UTC throughout, like the engine. */
+function fmtDate(iso, fmt = DATE_LONG) {
+    return fmt.format(new Date(`${iso}T00:00:00Z`));
+}
+
+/** Escape config text (e.g. "S&P 500") for innerHTML. */
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+/** Whole UTC days since the epoch — the timeline slider's unit. */
+const DAY_MS   = 24 * 60 * 60 * 1000;
+const isoToDay = (iso) => Math.round(Date.parse(iso) / DAY_MS);
+const dayToIso = (d) => new Date(d * DAY_MS).toISOString().split('T')[0];
+
+/** Start date for an "N years ago" preset, clamped to the asset's floor. */
+function presetStart(years) {
+    const floor = asset().minDate;
+    if (years === 'max') return floor;
+    const d = new Date();
+    d.setUTCFullYear(d.getUTCFullYear() - Number(years));
+    const iso = d.toISOString().split('T')[0];
+    return iso < floor ? floor : iso;
+}
+
+/** Read one design token. Chart colours must come from JS — CSS can't reach a canvas. */
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+/**
+ * Money-weighted annual return (XIRR) over dated cash flows.
+ *
+ * A DCA plan is a stream of contributions at different times, so
+ * (value / invested)^(1/years) — the shortcut this page's first version used —
+ * understates the return: it credits every dollar with the full elapsed period
+ * even though later contributions compounded for only part of it. XIRR solves
+ * for the rate that actually discounts these flows to zero.
+ *
+ * flows: [{ when: Date, amount: number }]  contributions negative, final value positive.
+ * Returns a percentage, or null if it cannot converge (which is a real possibility
+ * for deeply negative portfolios — the caller must handle null).
+ */
+function xirr(flows) {
+    if (flows.length < 2) return null;
+    const t0   = flows[0].when.getTime();
+    const yrs  = (f) => (f.when.getTime() - t0) / (365.25 * 24 * 3600 * 1000);
+    const npv  = (r) => flows.reduce((s, f) => s + f.amount / Math.pow(1 + r, yrs(f)), 0);
+
+    // Newton–Raphson with a numeric derivative, then bisection as a fallback.
+    let rate = 0.1;
+    for (let i = 0; i < 100; i++) {
+        const f0 = npv(rate);
+        if (!isFinite(f0)) break;
+        if (Math.abs(f0) < 1e-7) return rate * 100;
+        const d = (npv(rate + 1e-6) - f0) / 1e-6;
+        if (!isFinite(d) || Math.abs(d) < 1e-12) break;
+        const next = rate - f0 / d;
+        if (!isFinite(next) || next <= -0.999999) break;
+        if (Math.abs(next - rate) < 1e-9) return next * 100;
+        rate = next;
+    }
+
+    let lo = -0.9999, hi = 100;
+    let flo = npv(lo), fhi = npv(hi);
+    if (!isFinite(flo) || !isFinite(fhi) || flo * fhi > 0) return null;
+    for (let i = 0; i < 300; i++) {
+        const mid = (lo + hi) / 2;
+        const fm  = npv(mid);
+        if (!isFinite(fm)) return null;
+        if (Math.abs(fm) < 1e-9) return mid * 100;
+        if (flo * fm < 0) { hi = mid; fhi = fm; } else { lo = mid; flo = fm; }
+    }
+    return ((lo + hi) / 2) * 100;
+}
+
+/** Human-readable "time ago" string from a millisecond age */
+function ageLabel(ms) {
+    const sec = Math.round(ms / 1000);
+    if (sec < 90)   return 'just now';
+    const min = Math.round(sec / 60);
+    if (min < 90)   return `${min} min ago`;
+    const hrs = Math.round(min / 60);
+    if (hrs < 36)   return `${hrs}h ago`;
+    return `${Math.round(hrs / 24)}d ago`;
+}
+
+/** Calculate human-readable duration between two Date objects */
+function calcDuration(start, end) {
+    const ms    = end - start;
+    const years = Math.floor(ms / (1000 * 60 * 60 * 24 * 365.25));
+    const months = Math.floor((ms % (1000 * 60 * 60 * 24 * 365.25)) / (1000 * 60 * 60 * 24 * 30.44));
+    const parts = [];
+    if (years  > 0) parts.push(`${years} year${years   > 1 ? 's' : ''}`);
+    if (months > 0) parts.push(`${months} month${months > 1 ? 's' : ''}`);
+    return parts.join(' and ') || 'less than a month';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Errors
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Build an error that carries a visitor-safe sentence in `.user`.
+ * The UI shows `.user`; the raw technical detail stays in `.message` for the
+ * console, so operator instructions never reach a stranger's screen.
+ */
+function userError(userMessage, detail) {
+    const err = new Error(detail || userMessage);
+    err.user = userMessage;
+    return err;
+}
+
+/** Visitor-safe sentence for any error, including ones we didn't raise. */
+function userMessageFor(err, fallback) {
+    return err?.user || fallback;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status chip helper
+// ─────────────────────────────────────────────────────────────────────────────
+function setStatus(state, html) {
+    // state: 'loading' | 'ok' | 'stale' | 'error' → deck chip modifiers
+    const modifier = { loading: 'loading', ok: 'ok', stale: 'warn', error: 'down' }[state] || '';
+    dataStatusEl.className = `chip ${modifier}`;
+    statusTextEl.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fetch with retry + exponential back-off
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchWithRetry(url, retries = 3, baseDelay = 1500, timeout = 12000) {
+    for (let attempt = 0; attempt < retries; attempt++) {
+        const ctrl = new AbortController();
+        const tid  = setTimeout(() => ctrl.abort(), timeout);
+        try {
+            const res = await fetch(url, { signal: ctrl.signal });
+            clearTimeout(tid);
+            if (res.status === 429) throw userError(
+                'The price data is temporarily unavailable.',
+                `HTTP 429 (rate limited) from ${url}`);
+            if (!res.ok) throw userError(
+                'The price data could not be loaded.',
+                `HTTP ${res.status} from ${url}`);
+            return res;
+        } catch (err) {
+            clearTimeout(tid);
+            if (attempt === retries - 1) throw err;
+            const wait = baseDelay * Math.pow(2, attempt); // 1.5s, 3s, 6s …
+            console.warn(`Attempt ${attempt + 1}/${retries} failed: ${err.message}. Retrying in ${wait}ms…`);
+            await new Promise(r => setTimeout(r, wait));
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Price data — served from a pre-baked static file (no external API calls)
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Returns: { prices: [{ts, price}], latestPrice, fetchedAt, generatedAt, stale? }
+ *
+ * Strategy:
+ *  1. In-memory session cache        → instant
+ *  2. localStorage (< 24 h)          → fast (CDN-busted on each daily deploy)
+ *  3. /data/spy-prices.json          → static file, served from Netlify CDN,
+ *                                       rebuilt by a scheduled GitHub Action
+ *  4. Stale localStorage              → fallback with warning
+ *
+ * No API key. No external fetch from the browser. No CORS surface.
+ */
+async function loadPriceData() {
+    const a   = asset();
+    const key = cacheKey();
+    const k   = assetKey;   // captured before the first await
+
+    // 1. In-memory
+    if (sessionData[k]) return sessionData[k];
+
+    // 2. localStorage
+    let cached = null;
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw) cached = JSON.parse(raw);
+    } catch (_) { /* corrupted storage – treat as missing */ }
+
+    if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL) {
+        sessionData[k] = cached;
+        return cached;
+    }
+
+    // 3. Fetch the pre-baked static JSON, committed to the repo and served
+    //    straight from the CDN.
+    try {
+        const res  = await fetchWithRetry(`${a.dataUrl}?d=${new Date().toISOString().split('T')[0]}`);
+        const json = await res.json();
+
+        if (!json.prices?.length) {
+            throw userError(
+                `No ${a.name} price data is available right now.`,
+                `${a.dataUrl} parsed but contained no prices — the scheduled update job ` +
+                'may not have run; trigger it from the Actions tab and redeploy.'
+            );
+        }
+
+        const result = {
+            prices:      json.prices,
+            latestPrice: json.prices[json.prices.length - 1].price,
+            fetchedAt:   Date.now(),
+            generatedAt: json.generated ?? null,
+        };
+
+        // Persist — gracefully handle storage quota errors.
+        // Keys are date-scoped, so drop this asset's older entries first; without
+        // that they accrete a full price file per visit-day until the quota is hit.
+        // Only this asset's prefix is swept, so other keys (the chart scale) survive.
+        try {
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+                const k = localStorage.key(i);
+                if ((k?.startsWith(`${a.cachePrefix}_`) && k !== key) || k?.startsWith('sp500_dca_')) localStorage.removeItem(k);   // sp500_dca_*: this site's old ^GSPC cache
+            }
+            localStorage.setItem(key, JSON.stringify(result));
+        } catch (storageErr) {
+            console.warn('localStorage write failed (quota?), cache skipped.', storageErr);
+        }
+
+        sessionData[k] = result;
+        return result;
+
+    } catch (apiErr) {
+        // 4. Fall back to stale cache rather than failing completely
+        if (cached) {
+            console.warn(`Static file fetch failed (${apiErr.message}); falling back to cached data.`);
+            sessionData[k] = { ...cached, stale: true };
+            return sessionData[k];
+        }
+        throw apiErr; // nothing cached — surface the error
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Asset setup
+// ─────────────────────────────────────────────────────────────────────────────
+/** Write every asset-dependent label from the config, then load the price data.
+ *  `plan` carries start/freq/amount/match overrides from a shared link. */
+async function applyAsset({ plan = null } = {}) {
+    const a  = asset();
+
+    document.title = a.docTitle;
+    document.getElementById('pageTitle').innerHTML    = a.title;
+    document.getElementById('ledeAsset').innerHTML    = a.lede;
+    document.getElementById('assetRisk').innerHTML    = a.risk;
+    document.getElementById('sourceCredit').innerHTML = a.credit;
+    document.querySelectorAll('.asset-unit').forEach(el => { el.textContent = a.unitSingular; });
+    document.querySelectorAll('.asset-unit-h').forEach(el => { el.textContent = a.unitHeader; });
+    document.querySelectorAll('.asset-price-label').forEach(el => { el.innerHTML = a.priceLabel; });
+
+
+    // Date floor and default cadence are asset-specific; a shared link overrides them
+    if (plan?.start) startInput.value = plan.start;
+    startInput.min = a.minDate;
+    if (startInput.value && startInput.value < a.minDate) startInput.value = a.minDate;
+    setFrequency(plan?.freq || a.defaultFreq);
+    if (plan?.amount) amountInput.value = plan.amount;
+    if (plan?.employer) employerInput.value = plan.employer;
+
+    // Start dimmed until the price data is in, with no rows, result or failed-load
+    // state carried over
+    errorDiv.textContent = '';
+    workspace.classList.remove('is-empty');
+    workspace.classList.add('is-stale');
+    heroStoryEl.textContent  = `Loading ${a.name} price data\u2026`;
+    historyPanel.hidden      = false;
+    tableBody.innerHTML      = '';
+    historyCount.textContent = '';
+    lastResult    = null;
+    lastPurchases = [];
+    resetSortState();
+
+    await initPage();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The plan: form state, the timeline slider, presets, and the shareable URL
+// ─────────────────────────────────────────────────────────────────────────────
+/** True once the visitor has changed the plan (or arrived on a shared one). Until
+ *  then nothing is written, so a plain visit keeps a clean address. */
+let planTouched = false;
+
+/** The plan exactly as the form states it — unvalidated; see validatePlan(). */
+function readPlan() {
+    const checked = form.querySelector('input[name="frequency"]:checked');
+    return {
+        start:    startInput.value,
+        freq:     parseInt(checked ? checked.value : asset().defaultFreq, 10),
+        own:      parseFloat(amountInput.value),
+        // Employer match only applies to assets that opt in
+        employer: asset().employer ? (parseFloat(employerInput.value) || 0) : 0,
+    };
+}
+
+function setFrequency(days) {
+    form.querySelectorAll('input[name="frequency"]').forEach(r => { r.checked = r.value === String(days); });
+}
+
+/** Mirror the date input onto the timeline slider and the preset buttons. */
+function syncTimeline() {
+    const a  = asset();
+    const lo = isoToDay(a.minDate);
+    const hi = isoToDay(startInput.max || todayStr());
+    const v  = startInput.value ? Math.min(hi, Math.max(lo, isoToDay(startInput.value))) : hi;
+    startSlider.min   = lo;
+    startSlider.max   = hi;
+    startSlider.value = v;
+    // Lit track runs from the thumb's centre to today; 18px is the thumb's width
+    const frac = (v - lo) / Math.max(1, hi - lo);
+    startSlider.style.setProperty('--pct', `calc(9px + (100% - 18px) * ${frac.toFixed(4)})`);
+    startSlider.setAttribute('aria-valuetext', startInput.value ? fmtDate(startInput.value) : '');
+    document.getElementById('timelineMin').textContent = a.minDate.slice(0, 4);
+    document.querySelectorAll('.preset').forEach(b => {
+        b.setAttribute('aria-pressed', String(!!startInput.value && presetStart(b.dataset.years) === startInput.value));
+    });
+}
+
+/** The shareable link for what is on screen: the bare page until the plan is
+ *  touched, then start / freq / amt / match. One asset, so never ?asset=. */
+function planUrl() {
+    const url = new URL(location.href);
+    const qs  = url.searchParams;
+    qs.delete('asset');
+    if (planTouched) {
+        const plan = readPlan();
+        qs.set('start', plan.start);
+        qs.set('freq', String(plan.freq));
+        qs.set('amt', amountInput.value);
+        if (plan.employer > 0) qs.set('match', employerInput.value);
+        else                   qs.delete('match');
+    }
+    return url;
+}
+
+/** Keep the address bar a link to exactly what is on screen. Trailing-debounced
+ *  and never allowed to throw: WebKit raises a SecurityError after 100
+ *  replaceState calls in 30 s, and a slider drag runs once per frame. */
+let urlTimer = 0;
+function syncUrl({ now = false } = {}) {
+    clearTimeout(urlTimer);
+    const write = () => {
+        try { history.replaceState(null, '', planUrl()); }
+        catch (err) { console.warn('[dca] address bar not updated:', err); }
+    };
+    if (now) write();
+    else     urlTimer = setTimeout(write, 400);
+}
+
+/** Every control funnels through here. */
+function planChanged(mode) {
+    planTouched = true;
+    syncTimeline();
+    scheduleRun(mode);
+}
+
+startInput.addEventListener('input', () => planChanged('debounce'));
+startSlider.addEventListener('input', () => {
+    startInput.value = dayToIso(Number(startSlider.value));
+    planChanged('frame');
+});
+document.querySelector('.presets').addEventListener('click', (e) => {
+    const b = e.target.closest('.preset');
+    if (!b) return;
+    startInput.value = presetStart(b.dataset.years);
+    planChanged('now');
+});
+form.addEventListener('change', (e) => { if (e.target.name === 'frequency') planChanged('now'); });
+amountInput.addEventListener('input', () => planChanged('debounce'));
+employerInput.addEventListener('input', () => planChanged('debounce'));
+
+async function copyLink() {
+    planTouched = true;
+    const link = planUrl().href;       // built directly; the address bar may lag behind
+    syncUrl({ now: true });
+    const btn = document.getElementById('shareBtn');
+    let ok = false;
+    try { await navigator.clipboard.writeText(link); ok = true; }
+    catch (_) { /* no clipboard (insecure context, or permission denied) */ }
+    btn.textContent = ok ? 'Link copied' : 'Copy from address bar';
+    btn.classList.toggle('is-done', ok);
+    clearTimeout(copyLink.timer);
+    copyLink.timer = setTimeout(() => {
+        btn.textContent = 'Copy link';
+        btn.classList.remove('is-done');
+    }, 2000);
+}
+document.getElementById('shareBtn').addEventListener('click', copyLink);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Page initialisation: set date defaults + load price data, then render
+// ─────────────────────────────────────────────────────────────────────────────
+async function initPage() {
+    const today = todayStr();
+    const a     = asset();
+    dataReady   = false;
+
+    // Default start = 1 year ago; max = today (no future dates)
+    startInput.max = today;
+    if (!startInput.value || startInput.value > today) startInput.value = presetStart(1);
+    syncTimeline();
+
+    // Read the earliest simulatable date off the picker itself, so the header
+    // chip can never advertise a range the date input would reject.
+    if (startInput.min) {
+        document.getElementById('coverageText').textContent =
+            `${a.coverage} back to ${startInput.min}`;
+    }
+
+    setStatus('loading', `Loading ${a.name} price data&hellip;`);
+    try {
+        const data     = await loadPriceData();
+        const lastTs      = data.prices?.length
+            ? data.prices[data.prices.length - 1].ts
+            : null;
+        const dataAgeMs   = lastTs ? (Date.now() - lastTs * 1000) : Infinity;
+        const isStale     = data.stale || dataAgeMs > a.staleAfterDays * 24 * 60 * 60 * 1000;
+        // Name what the number is. Unlabelled, "SPY $760.88" reads as a live
+        // ticker; it is the most recent daily close and can be days behind.
+        const genLabel    = lastTs
+            ? `latest close ${new Date(lastTs * 1000).toISOString().split('T')[0]}`
+            : `cached ${ageLabel(Date.now() - data.fetchedAt)}`;
+        const priceLabel  = `${a.mark}<strong>${fmtUSD(data.latestPrice)}</strong>`;
+        if (isStale) {
+            setStatus('stale',
+                `${priceLabel}&ensp;&bull;&ensp;${genLabel} &mdash; may be outdated`);
+        } else {
+            setStatus('ok', `${priceLabel}&ensp;&bull;&ensp;${genLabel}`);
+        }
+        dataReady = true;
+        await run();
+    } catch (err) {
+        console.error('[dca] price data failed to load:', err);
+        const msg = userMessageFor(err, `${a.name} price data could not be loaded.`);
+        setStatus('error', msg + ' Refresh the page to try again.');
+        showUnavailable(msg);
+    }
+}
+
+/** No data for this asset: say so where the number would be, hide the rest. */
+function showUnavailable(msg) {
+    workspace.classList.remove('is-stale');
+    workspace.classList.add('is-empty');
+    historyPanel.hidden     = true;
+    heroValueEl.textContent = '—';
+    heroDeltaEl.textContent = '';
+    heroAsOfEl.textContent  = '';
+    heroStoryEl.textContent = msg + ' Refresh the page to try again.';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DCA simulation — pure: price series + plan in, figures out. No DOM.
+// ─────────────────────────────────────────────────────────────────────────────
+/** Throws a visitor-safe userError for anything the engine can't run. */
+function validatePlan(plan, a) {
+    const startDate = new Date(plan.start);
+    if (isNaN(startDate.getTime())) throw userError('Please enter a valid start date.');
+    if (plan.start < a.minDate)     throw userError(`Pick a start date on or after ${fmtDate(a.minDate)}.`);
+    if (startDate >= new Date())    throw userError('Your start date must be before today.');
+    // `!(x >= 1)`, not `x < 1`: an emptied field parses to NaN, and NaN < 1 is false
+    if (!(plan.own >= 1))           throw userError('Enter an amount of $1 or more per purchase.');
+    if (plan.employer < 0)          throw userError('Employer match cannot be negative.');
+}
+
+function simulate(prices, plan, a) {
+    const startDate      = new Date(plan.start);
+    const frequencyDays  = plan.freq;
+    const ownAmount      = plan.own;
+    // readPlan() already zeroes the match for assets without one; guard here
+    // too so a stale value can't leak in.
+    const employerAmount = a.employer ? plan.employer : 0;
+    const investAmount   = ownAmount + employerAmount;
+    const endDate        = new Date(); // always "today" — no hardcoded cutoff
+
+    // ── Generate purchase schedule ──────────────────────────────────────
+    const purchaseDates = [];
+    const cursor = new Date(startDate);
+    while (cursor <= endDate) {
+        purchaseDates.push(new Date(cursor));
+        cursor.setDate(cursor.getDate() + frequencyDays);
+    }
+
+    // ── Simulate each purchase ──────────────────────────────────────────
+    //    For each date, find the latest closing price at or before that date.
+    //    prices[] is sorted ascending by ts.
+    let totalInvested = 0;
+    let totalOwn      = 0;
+    let totalEmployer = 0;
+    let totalUnits    = 0;
+    const purchases   = [];
+    const flows       = [];   // dated cash flows, for XIRR
+
+    for (const date of purchaseDates) {
+        const unixTs = Math.floor(date.getTime() / 1000);
+
+        // Binary search: find the last price entry with ts <= unixTs
+        let lo = 0, hi = prices.length - 1, idx = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >>> 1;
+            if (prices[mid].ts <= unixTs) { idx = mid; lo = mid + 1; }
+            else                          { hi = mid - 1; }
+        }
+        if (idx < 0 || prices[idx].price <= 0) continue;
+
+        const price       = prices[idx].price;
+        const unitsBought = investAmount / price;
+        totalInvested    += investAmount;
+        totalOwn         += ownAmount;
+        totalEmployer    += employerAmount;
+        totalUnits       += unitsBought;
+        flows.push({ when: new Date(date), amount: -investAmount });
+
+        purchases.push({
+            n:             purchases.length + 1,
+            date:          date.toISOString().split('T')[0],
+            price,
+            unitsBought,
+            totalUnits,
+            totalInvested,
+            portfolioValue: price * totalUnits,
+            profit:         price * totalUnits - totalInvested,
+        });
+    }
+
+    if (purchases.length === 0) {
+        const from = new Date(prices[0].ts * 1000).toISOString().split('T')[0];
+        const to   = new Date(prices[prices.length - 1].ts * 1000).toISOString().split('T')[0];
+        throw userError(
+            `No purchases landed inside the available price data, which runs ${from} to ${to}. `
+            + 'Try a different start date.');
+    }
+
+    // ── Final metrics use the most recent available price ───────────────
+    const endUnix    = Math.floor(endDate.getTime() / 1000);
+    let lo2 = 0, hi2 = prices.length - 1, finalIdx = prices.length - 1;
+    while (lo2 <= hi2) {
+        const mid = (lo2 + hi2) >>> 1;
+        if (prices[mid].ts <= endUnix) { finalIdx = mid; lo2 = mid + 1; }
+        else                           { hi2 = mid - 1; }
+    }
+    const finalPrice = prices[finalIdx].price;
+    const finalValue = totalUnits * finalPrice;
+    const profit     = finalValue - totalInvested;
+    const roi        = ((finalValue - totalInvested) / totalInvested * 100).toFixed(2);
+    const avgCost    = totalInvested / totalUnits;
+    const duration   = calcDuration(startDate, endDate);
+
+    // Money-weighted annual return: contributions out, final value back in today.
+    const finalDateObj = new Date(prices[finalIdx].ts * 1000);
+    const annual = xirr([...flows, { when: finalDateObj, amount: finalValue }]);
+    const spanYears = (endDate - startDate) / (365.25 * 24 * 3600 * 1000);
+
+    // Plain mean of the prices actually paid. With equal dollars per buy, average
+    // cost is their harmonic mean, so it can never land above this.
+    const meanPaid = purchases.reduce((s, p) => s + p.price, 0) / purchases.length;
+
+    // ── Chart series ─────────────────────────────────────────────────────
+    //    Each purchase row is valued at the close on its OWN date, so the last
+    //    purchase can sit days behind today. Extend both series to the latest
+    //    close so the line ends on the same Portfolio Value the summary reports.
+    //    No purchase is added — Total Invested stays flat across that last step.
+    const labels       = purchases.map(p => p.date);
+    const investedData = purchases.map(p => p.totalInvested);
+    const valueData    = purchases.map(p => p.portfolioValue);
+
+    //    Only extend when the latest close is genuinely AFTER the last purchase.
+    //    If the last purchase already fell on (or after) that close, it is priced
+    //    at the same number and appending would put the axis out of order.
+    const finalDate = new Date(prices[finalIdx].ts * 1000).toISOString().split('T')[0];
+    if (finalDate > labels[labels.length - 1]) {
+        labels.push(finalDate);
+        investedData.push(totalInvested);
+        valueData.push(finalValue);
+    }
+
+    return {
+        purchases, totalInvested, totalOwn, totalEmployer, totalUnits, employerAmount,
+        finalPrice, finalValue, profit, roi, avgCost, duration, annual, spanYears,
+        meanPaid, finalDate, labels, investedData, valueData,
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live results — every change re-runs the simulation; there is no Run button
+// ─────────────────────────────────────────────────────────────────────────────
+let runTimer   = 0;
+let runFrame   = 0;
+let runSeq     = 0;
+let dataReady  = false;     // the current asset's price data is loaded
+let lastResult = null;      // most recent successful run (scale toggle, CSV)
+
+/** 'frame' for the slider (next paint), 'debounce' while typing, 'now' for clicks. */
+function scheduleRun(mode = 'debounce') {
+    clearTimeout(runTimer);
+    cancelAnimationFrame(runFrame);
+    if (mode === 'frame') runFrame = requestAnimationFrame(() => run({ quick: true }));
+    else                  runTimer = setTimeout(() => run(), mode === 'now' ? 0 : 200);
+}
+
+async function run({ quick = false } = {}) {
+    if (!dataReady) return;
+    const seq = ++runSeq;
+    const a   = asset();
+    try {
+        const plan = readPlan();
+        validatePlan(plan, a);
+        // Retrieve cached price data (already loaded by initPage)
+        const { prices } = await loadPriceData();
+        if (seq !== runSeq) return;             // superseded by a newer run
+        const r = simulate(prices, plan, a);
+        errorDiv.textContent = '';
+        render(r, plan, a, quick);
+        if (planTouched) syncUrl();
+    } catch (err) {
+        if (seq !== runSeq) return;
+        console.error('[dca] simulation failed:', err);
+        const user = userMessageFor(err, 'Something went wrong running the simulation. Please try again.');
+        // Only rewrite on change: role="alert" re-announces every write, and a drag
+        // with a bad field would otherwise fire it once per frame.
+        if (errorDiv.textContent !== '⚠ ' + user) errorDiv.textContent = '⚠ ' + user;
+        if (!lastResult) heroStoryEl.textContent = user;   // nothing rendered yet: say why there too
+        workspace.classList.add('is-stale');    // keep the last good render, dimmed
+    }
+}
+
+// form.requestSubmit() (the handoff's console recipes use it) runs at once. Enter
+// can't submit here — no submit button, several fields — but every field is live.
+form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    scheduleRun('now');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rendering
+// ─────────────────────────────────────────────────────────────────────────────
+function render(r, plan, a, quick) {
+    lastResult = { ...r, plan };
+    workspace.classList.remove('is-stale', 'is-empty');
+    historyPanel.hidden = false;
+
+    renderHero(r, plan, a, quick);
+    renderTiles(r, a);
+    renderEffect(r, a);
+
+    // History before the chart on purpose: if the Chart.js CDN is blocked or
+    // fails, the table still updates instead of being skipped by the throw.
+    lastPurchases = r.purchases;   // store for re-sorting and CSV
+    const n = r.purchases.length;
+    historyCount.textContent = `${n.toLocaleString('en-US')} purchase${n === 1 ? '' : 's'}`;
+    queueHistory(quick);
+
+    // Chart.js is a CDN dependency. If it is blocked or fails to parse, the
+    // figures above must still stand, so it gets its own try/catch rather than
+    // taking the whole run down with it.
+    try {
+        drawChart(r, a);
+        chartPanel.hidden = false;
+    } catch (chartErr) {
+        console.error('[dca] chart could not be rendered:', chartErr);
+        chartPanel.hidden = true;
+    }
+}
+
+let heroShown = null;       // the figure currently on screen, mid-animation included
+let heroRaf   = 0;
+
+/** Ease the hero figure to its new value; instant while scrubbing or with reduced motion. */
+function countTo(to, instant) {
+    cancelAnimationFrame(heroRaf);
+    const from = heroShown ?? 0;
+    // Written first, so the right figure is in the DOM even if no frame ever runs
+    // (a background tab, a headless capture). The first animation frame lands
+    // before paint, so this never flashes.
+    heroValueEl.textContent = fmtMoney(to);
+    if (instant || reduceMotion || from === to || document.hidden) {
+        heroShown = to;
+        return;
+    }
+    const t0 = performance.now();
+    const step = (now) => {
+        const k = Math.min(1, (now - t0) / 450);
+        heroShown = k === 1 ? to : from + (to - from) * (1 - Math.pow(1 - k, 3));   // ease-out cubic
+        heroValueEl.textContent = fmtMoney(heroShown);
+        if (k < 1) heroRaf = requestAnimationFrame(step);
+    };
+    heroRaf = requestAnimationFrame(step);
+}
+
+function renderHero(r, plan, a, quick) {
+    const up = r.profit >= 0;
+    countTo(r.finalValue, quick);
+    heroAsOfEl.textContent  = `at the ${fmtDate(r.finalDate)} close`;
+    heroDeltaEl.className   = `hero-delta ${up ? 'up' : 'down'}`;
+    heroDeltaEl.textContent = `${up ? '▲' : '▼'} ${fmtSigned(r.profit)} · ${fmtPct(Number(r.roi))}`;
+
+    const n     = r.purchases.length;
+    const match = r.employerAmount > 0 ? `, plus a ${fmtAmount(r.employerAmount)} employer match,` : '';
+    heroStoryEl.innerHTML =
+        `Buying <strong>${fmtAmount(plan.own)}</strong> of ${esc(a.ticker)}${match} ${FREQ_PHRASE[plan.freq]} `
+        + `since <strong>${fmtDate(plan.start)}</strong> &mdash; ${r.duration}, `
+        + `${n.toLocaleString('en-US')} purchase${n === 1 ? '' : 's'}, `
+        + `<strong>${fmtMoney(r.totalInvested)}</strong> in total.`;
+
+    // Screen readers get one settled sentence, not one per slider frame.
+    clearTimeout(renderHero.srTimer);
+    renderHero.srTimer = setTimeout(() => {
+        srSummaryEl.textContent = `Portfolio value ${fmtMoney(r.finalValue)} on ${fmtMoney(r.totalInvested)} `
+            + `invested, a return of ${fmtPct(Number(r.roi))}.`;
+    }, 700);
+}
+
+function tile(label, value, sub, tone = '') {
+    return `<div class="stat"><div class="label">${label}</div>`
+         + `<div class="value ${tone}">${value}</div>`
+         + (sub ? `<div class="stat-sub">${sub}</div>` : '') + '</div>';
+}
+
+function renderTiles(r, a) {
+    const n    = r.purchases.length;
+    const tone = (x) => (x >= 0 ? 'up' : 'down');
+    // Only meaningful once a reasonable span has elapsed — over a few weeks
+    // XIRR annualises noise into absurd figures.
+    const annualOk = r.annual !== null && isFinite(r.annual) && r.spanYears >= 1;
+    const invested = r.totalEmployer > 0
+        ? `You ${fmtMoney(r.totalOwn)} &middot; employer ${fmtMoney(r.totalEmployer)}`
+        : `${n.toLocaleString('en-US')} purchase${n === 1 ? '' : 's'}`;
+    tilesEl.innerHTML = [
+        tile('Total invested', fmtMoney(r.totalInvested), invested),
+        tile('Total profit / loss', fmtSigned(r.profit), 'Unrealised, excl. dividends &amp; fees', tone(r.profit)),
+        tile('Return on investment', fmtPct(Number(r.roi)), 'Cumulative, whole period', tone(r.profit)),
+        tile('Annualised return',
+             annualOk ? fmtPct(r.annual) : '&mdash;',
+             annualOk ? 'Money-weighted (XIRR)' : 'Shown once a run spans a year',
+             annualOk ? tone(r.annual) : ''),
+        tile(`Total ${a.unitHeader} accumulated`, `${fmtUnits(r.totalUnits)} <small>${a.unitPlural}</small>`,
+             `Latest close ${fmtUSD(r.finalPrice)}`),
+        tile(`Average cost per ${a.unitSingular}`, fmtUSD(r.avgCost), `Total invested &divide; ${a.unitPlural} held`),
+    ].join('');
+}
+
+/** The mechanic DCA is named for, made visible: average cost vs the average
+ *  price on the days you bought. */
+function renderEffect(r, a) {
+    const below    = r.meanPaid > 0 ? (1 - r.avgCost / r.meanPaid) * 100 : 0;
+    const top      = Math.max(r.avgCost, r.meanPaid) || 1;
+    const costBar  = document.getElementById('effCostBar');
+    const priceBar = document.getElementById('effPriceBar');
+    document.getElementById('effCost').textContent  = fmtUSD(r.avgCost);
+    document.getElementById('effPrice').textContent = fmtUSD(r.meanPaid);
+    costBar.style.width  = `${(r.avgCost / top) * 100}%`;
+    priceBar.style.width = `${(r.meanPaid / top) * 100}%`;
+    costBar.style.setProperty('--c', cssVar(a.seriesVar) || cssVar('--accent'));
+    priceBar.style.setProperty('--c', cssVar('--series-neutral'));
+    document.getElementById('effNote').innerHTML = below >= 0.05
+        ? `A fixed dollar amount buys more ${a.unitPlural} when the price is low than when it&rsquo;s high, `
+          + `so your average cost lands <strong>${below.toFixed(1)}% below</strong> the average price on your `
+          + `purchase dates. That holds for any fixed-amount schedule &mdash; it&rsquo;s arithmetic, not a forecast.`
+        : `With ${r.purchases.length === 1 ? 'a single purchase' : 'prices this steady'}, your average cost `
+          + `matches the average price paid. The gap opens up as the price swings between buys.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chart
+// ─────────────────────────────────────────────────────────────────────────────
+let chartTheme = null;      // tokens are static (dark only), so they are read once
+let chartData  = null;      // what the chart is plotting right now, for the readout
+const tickCache = new Map();
+
+/** Built once per scale setting, then updated in place, so the slider can
+ *  re-render every frame without rebuilding Chart.js. */
+function drawChart(r, a) {
+    const t      = chartTheme ??= deckChartTheme();
+    const series = cssVar(a.seriesVar) || t.accent;
+    chartData = {
+        labels: r.labels, value: r.valueData, invested: r.investedData,
+        series, neutral: t.neutral,
+        long: isoToDay(r.labels[r.labels.length - 1]) - isoToDay(r.labels[0]) > 548,
+    };
+    const builtFor = `${assetKey}|${chartScale}`;
+    if (dcaChart && chartBuiltFor === builtFor) {
+        dcaChart.data.labels           = r.labels;
+        dcaChart.data.datasets[0].data = r.valueData;
+        dcaChart.data.datasets[1].data = r.investedData;
+        dcaChart.update('none');
+    } else {
+        if (dcaChart) dcaChart.destroy();
+        dcaChart = new Chart(chartCanvas, chartConfig(r, t, series));
+        chartBuiltFor = builtFor;
+    }
+    showReadout(null);
+}
+
+/** X ticks: "Apr 2013" on long runs, "Apr 28" on short ones. Memoised — the
+ *  category axis formats every label while measuring, thousands on long runs. */
+function tickDate(iso) {
+    if (!iso) return '';
+    const k = (chartData.long ? 'L' : 'S') + iso;
+    let s = tickCache.get(k);
+    if (s === undefined) {
+        s = fmtDate(iso, chartData.long ? DATE_MY : DATE_MD);
+        if (tickCache.size > 20000) tickCache.clear();
+        tickCache.set(k, s);
+    }
+    return s;
+}
+
+/** Y ticks; on a log axis only the 1-2-5 steps are labelled. */
+function yTick(v, log) {
+    if (log) {
+        const m = v / Math.pow(10, Math.floor(Math.log10(v)));
+        if (![1, 2, 5].some(k => Math.abs(m - k) < 1e-6)) return '';
+    }
+    return fmtCompact(v);
+}
+
+/** Hairline at the hovered date, drawn behind the hover dots. */
+function crosshairPlugin(color) {
+    return {
+        id: 'crosshair',
+        beforeDatasetsDraw(chart) {
+            const active = chart.getActiveElements();
+            if (!active.length) return;
+            const { ctx, chartArea: { top, bottom } } = chart;
+            const x = active[0].element.x;
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth   = 1;
+            ctx.beginPath();
+            ctx.moveTo(x, top);
+            ctx.lineTo(x, bottom);
+            ctx.stroke();
+            ctx.restore();
+        },
+    };
+}
+
+function chartConfig(r, t, series) {
+    const log   = chartScale === 'logarithmic';
+    const hover = { pointRadius: 0, pointHoverRadius: 5, pointHoverBorderWidth: 2, pointHoverBorderColor: t.surface };
+    return {
+        type: 'line',
+        data: {
+            labels: r.labels,
+            datasets: [
+                {
+                    label: 'Portfolio value',
+                    data: r.valueData,
+                    borderColor: series,
+                    borderWidth: 2,
+                    tension: 0.25,
+                    ...hover,
+                    pointHoverBackgroundColor: series,
+                    // Gain/loss wash between the two lines, in the semantic green/red
+                    // (never the asset colour), so "underwater" reads at a glance.
+                    fill: { target: 1, above: t.liveWash, below: t.downWash },
+                },
+                {
+                    label: 'Total invested',
+                    data: r.investedData,
+                    borderColor: t.neutral,
+                    borderWidth: 1.5,
+                    ...hover,
+                    pointHoverRadius: 4,
+                    pointHoverBackgroundColor: t.neutral,
+                    fill: false,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            normalized: true,
+            animation: { duration: reduceMotion ? 0 : 500 },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },     // the readout above the chart is the legend
+                tooltip: {
+                    enabled: false,             // values go to the readout, not a floating box
+                    external: ({ tooltip }) => showReadout(
+                        tooltip.opacity && tooltip.dataPoints?.length ? tooltip.dataPoints[0].dataIndex : null),
+                },
+            },
+            scales: {
+                x: {
+                    grid:   { display: false },
+                    border: { color: t.grid },
+                    ticks:  {
+                        color: t.faint, maxRotation: 0, autoSkipPadding: 28,
+                        callback(v) { return tickDate(this.getLabelForValue(v)); },
+                    },
+                },
+                y: {
+                    type: log ? 'logarithmic' : 'linear',
+                    beginAtZero: !log,
+                    grid:   { color: t.grid },
+                    border: { display: false },
+                    ticks:  { color: t.faint, maxTicksLimit: 7, callback: (v) => yTick(v, log) },
+                },
+            },
+        },
+        plugins: [crosshairPlugin(t.faint)],
+    };
+}
+
+/** The readout above the chart: the hovered date, or the latest close when idle.
+ *  Reads the plotted arrays directly by index, so hiding or reordering series
+ *  can never make it report the wrong line. */
+function showReadout(i) {
+    const d = chartData;
+    if (!d || !d.labels.length) return;
+    const idle = i == null || i < 0 || i >= d.labels.length;
+    const idx  = idle ? d.labels.length - 1 : i;
+    const v    = d.value[idx];
+    const inv  = d.invested[idx];
+    const roi  = inv > 0 ? (v - inv) / inv * 100 : 0;
+    readoutDateEl.textContent = `${idle ? 'Latest close · ' : ''}${fmtDate(d.labels[idx])}`;
+    readoutEl.innerHTML =
+          `<span><i class="key" style="--c:${d.series}"></i><b>${fmtMoney(v)}</b>Portfolio value</span>`
+        + `<span><i class="key" style="--c:${d.neutral}"></i><b>${fmtMoney(inv)}</b>Total invested</span>`
+        + `<span><b class="${roi >= 0 ? 'up' : 'down'}">${fmtPct(roi)}</b>ROI</span>`;
+}
+
+function syncScaleButtons() {
+    document.querySelectorAll('.seg-sm .seg-btn').forEach(b => {
+        b.setAttribute('aria-pressed', String(b.dataset.scale === chartScale));
+    });
+}
+
+document.querySelector('.seg-sm').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg-btn');
+    if (!b || b.dataset.scale === chartScale) return;
+    chartScale = b.dataset.scale;
+    try { localStorage.setItem('dca_chart_scale', chartScale); } catch (_) {}
+    syncScaleButtons();
+    if (lastResult) {
+        try { drawChart(lastResult, asset()); }
+        catch (chartErr) { console.error('[dca] chart could not be rendered:', chartErr); }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// History table rendering + column sorting
+// ─────────────────────────────────────────────────────────────────────────────
+let lastPurchases = [];
+let sortCol  = null;   // current sort column key
+let sortDir  = 'asc';  // 'asc' | 'desc'
+let historyDirty = false;
+let historyTimer = 0;
+
+/** Render (or re-render) the history table from a purchases array. Built as one
+ *  string and written once — a weekly run from 1993 is ~1,750 rows. */
+function renderHistoryTable(data) {
+    let html = '';
+    for (const p of data) {
+        const cls = p.profit >= 0 ? 'positive' : 'negative';
+        html += `<tr><td class="num">${p.n}</td><td class="num">${p.date}</td>`
+              + `<td class="num">${fmtUSD(p.price)}</td><td class="num">${fmtUnits(p.unitsBought)}</td>`
+              + `<td class="num">${fmtUnits(p.totalUnits)}</td><td class="num">${fmtUSD(p.totalInvested)}</td>`
+              + `<td class="num">${fmtUSD(p.portfolioValue)}</td><td class="${cls}">${fmtUSD(p.profit)}</td></tr>`;
+    }
+    tableBody.innerHTML = html;
+}
+
+/** The table is only built while its panel is open, and a burst of slider
+ *  frames is coalesced into one rebuild. */
+function queueHistory(quick) {
+    historyDirty = true;
+    if (!historyPanel.open) return;
+    clearTimeout(historyTimer);
+    historyTimer = setTimeout(flushHistory, quick ? 250 : 0);
+}
+
+function flushHistory() {
+    if (!historyDirty) return;
+    historyDirty = false;
+    if (sortCol) applySort();
+    else         renderHistoryTable(lastPurchases);
+}
+
+historyPanel.addEventListener('toggle', () => { if (historyPanel.open) flushHistory(); });
+
+/** Drop every header's sort marker and aria-sort. Called both when re-sorting and
+ *  when a new simulation renders — otherwise a header keeps claiming (to sighted
+ *  users via the arrow, and to screen readers via aria-sort) an order the freshly
+ *  rendered chronological table does not have. */
+function clearSortIndicators() {
+    document.querySelectorAll('#historyTable th.sortable').forEach(h => {
+        h.classList.remove('asc', 'desc');
+        h.setAttribute('aria-sort', 'none');
+    });
+}
+
+/** Full reset — markers AND the remembered column/direction. Used when a new
+ *  simulation renders rows in chronological order. */
+function resetSortState() {
+    sortCol = null;
+    sortDir = 'asc';
+    clearSortIndicators();
+}
+
+/** Sort by a column key and re-render, keeping header state and aria-sort in step */
+function sortHistoryBy(th) {
+    if (!th || !lastPurchases.length) return;
+
+    const col = th.dataset.col;
+
+    // Toggle direction if same column, otherwise default to ascending
+    if (col === sortCol) {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortCol = col;
+        sortDir = 'asc';
+    }
+
+    applySort();
+}
+
+/** Render lastPurchases in the remembered order. Live re-runs call this too, so a
+ *  sorted table stays sorted as the plan changes — and aria-sort stays truthful. */
+function applySort() {
+    const th = document.querySelector(`#historyTable th.sortable[data-col="${sortCol}"]`);
+    if (!th) return renderHistoryTable(lastPurchases);
+
+    // Update header classes + expose the state to assistive tech
+    clearSortIndicators();
+    th.classList.add(sortDir);
+    th.setAttribute('aria-sort', sortDir === 'asc' ? 'ascending' : 'descending');
+
+    // Sort a copy of the data
+    const col    = sortCol;
+    const sorted = [...lastPurchases].sort((a, b) => {
+        let va = a[col], vb = b[col];
+        // Dates compare as strings (YYYY-MM-DD sorts lexicographically)
+        if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        return sortDir === 'asc' ? va - vb : vb - va;
+    });
+
+    renderHistoryTable(sorted);
+}
+
+const historyHead = document.querySelector('#historyTable thead');
+historyHead.addEventListener('click', (e) => sortHistoryBy(e.target.closest('th.sortable')));
+historyHead.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.repeat) return;        // held key would flip direction ~30x/second
+    const th = e.target.closest('th.sortable');
+    if (!th) return;
+    e.preventDefault();          // stop Space scrolling the page
+    sortHistoryBy(th);
+});
+
+/** Chronological CSV of the last successful run, at full precision. */
+function downloadCsv() {
+    if (!lastPurchases.length || !lastResult) return;
+    const a    = asset();
+    const d    = a.decimals;
+    const cell = (s) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    const head = ['#', 'Date', `${a.ticker} price (USD)`, `${a.unitHeader} bought`, `Total ${a.unitHeader}`,
+                  'Total invested (USD)', 'Value on date (USD)', 'Profit / loss (USD)'];
+    const rows = lastPurchases.map(p => [
+        p.n, p.date, p.price.toFixed(2), p.unitsBought.toFixed(d), p.totalUnits.toFixed(d),
+        p.totalInvested.toFixed(2), p.portfolioValue.toFixed(2), p.profit.toFixed(2),
+    ].join(','));
+    const csv  = [head.map(cell).join(','), ...rows].join('\n') + '\n';
+    const url  = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const link = document.createElement('a');
+    link.href     = url;
+    link.download = `dca-${assetKey}-every-${lastResult.plan.freq}d-from-${lastResult.plan.start}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+document.getElementById('csvBtn').addEventListener('click', downloadCsv);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boot — honour a shared plan (start, freq, amt, match), so every view is linkable.
+// Any ?asset= param is ignored: this page prices one asset.
+// ─────────────────────────────────────────────────────────────────────────────
+(() => {
+    const qs   = new URLSearchParams(location.search);
+    const plan = {};
+    if (/^\d{4}-\d{2}-\d{2}$/.test(qs.get('start') ?? '')) plan.start    = qs.get('start');
+    if (['7', '14', '30'].includes(qs.get('freq')))           plan.freq     = qs.get('freq');
+    const num  = (k) => { const v = parseFloat(qs.get(k)); return Number.isFinite(v) ? v : NaN; };
+    if (num('amt') >= 1)                                     plan.amount   = String(num('amt'));
+    if (num('match') >= 0)                                   plan.employer = String(num('match'));
+    planTouched = Object.keys(plan).length > 0;   // a shared plan stays in the URL
+    syncScaleButtons();
+    applyAsset({ plan });
+})();
+</script>
 </body>
 </html>
