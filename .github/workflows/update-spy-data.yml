@@ -1,4 +1,4 @@
-name: Update S&P 500 Price Data
+name: Update SPY Price Data
 
 on:
   schedule:
@@ -25,16 +25,16 @@ jobs:
       - name: Install yfinance
         run: pip install yfinance --quiet
 
-      - name: Fetch S&P 500 prices
-        run: python scripts/fetch_sp500_prices.py
+      - name: Fetch SPY prices
+        run: python scripts/fetch_spy_prices.py
 
       - name: Commit and push if data changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/sp500-prices.json
+          git add data/spy-prices.json
           git diff --cached --quiet && echo "No new data — nothing to commit." || (
-            git commit -m "chore: update S&P 500 price data $(date -u +%Y-%m-%d) [skip ci]" &&
+            git commit -m "chore: update SPY price data $(date -u +%Y-%m-%d)" &&
             git pull --rebase &&
             git push
           )
