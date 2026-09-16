@@ -92,6 +92,11 @@ const EXPORTS = `
     simulate, xirr, validatePlan, todayStr, calcDuration, userMessageFor,
     fmtUSD, fmtUnits, fmtMoney, fmtSigned, fmtPct, fmtAmount, fmtCompact, fmtDate,
     isoToDay, dayToIso, ASSETS, asset: asset(),
+    heatmapGrid, heatmapJob, heatmapGeometry, heatmapCell, heatmapRowStats,
+    addMonthsIso, periodLabel, lastCloseIso,
+    HEAT_PERIODS, HEAT_CLAMP, HEAT_AMOUNT,
+    renderHeatRows, renderHeatLegend, heatColorFor, heatColors, heatMarkerIndex, fmtRate,
+    doc: document,   // the stub, so DOM-layer output can be asserted
 };
 `;
 
@@ -104,11 +109,19 @@ export function loadEngine() {
         location: { search: '', pathname: '/', href: 'https://example.test/' },
         history: { replaceState() {} },
         navigator: { clipboard: { writeText: async () => {} } },
-        getComputedStyle: () => ({ getPropertyValue: () => '' }),
+        // Real token values: the heatmap's colour ramp is built from them.
+        getComputedStyle: () => ({ getPropertyValue: (n) => ({
+            '--down': '#ff6b6b', '--live': '#3ddc84', '--accent': '#ff9a44',
+            '--bg-raised': '#10142e', '--card': '#12163a', '--faint': '#7b81aa',
+            '--muted': '#9ba1c5', '--text': '#e8eaf6', '--grid': 'rgba(255, 255, 255, 0.07)',
+            '--series-blue': '#5b8def', '--series-neutral': '#c6c9de',
+            '--live-wash': 'rgba(61, 220, 132, 0.12)', '--down-wash': 'rgba(255, 107, 107, 0.12)',
+        }[n] ?? '') }),
         fetch: async () => { throw new Error('the engine tests never fetch'); },
         requestAnimationFrame: () => 0,
         cancelAnimationFrame: () => {},
         setTimeout, clearTimeout, setInterval, clearInterval,
+        performance,    // the heatmap's chunked pass times itself against it
         console: { ...console, warn() {}, error() {} },
         Chart: class { static defaults = { font: {} }; update() {} destroy() {} },
         URL, Blob, DOMException,

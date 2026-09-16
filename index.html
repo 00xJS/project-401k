@@ -354,6 +354,7 @@
                 "controls tiles"
                 "controls chart"
                 "controls effect"
+                "controls heat"
                 "controls note";
             gap: 16px 20px;
             align-items: start;
@@ -745,7 +746,8 @@
 
         /* ── Purchase history ── */
         .history { margin-top: 20px; }
-        .history > summary {
+        .history > summary,
+        .heat > summary {
             display: flex;
             flex-wrap: wrap;
             align-items: baseline;
@@ -754,15 +756,19 @@
             cursor: pointer;
             list-style: none;
         }
-        .history > summary::-webkit-details-marker { display: none; }
-        .history > summary::after {
+        .history > summary::-webkit-details-marker,
+        .heat > summary::-webkit-details-marker { display: none; }
+        .history > summary::after,
+        .heat > summary::after {
             content: '+';
             margin-left: auto;
             font-family: var(--font-mono);
             color: var(--faint);
         }
-        .history[open] > summary::after { content: '\2212'; }   /* − */
-        .history > summary:hover .panel-title { color: var(--accent); }
+        .history[open] > summary::after,
+        .heat[open] > summary::after { content: '\2212'; }   /* − */
+        .history > summary:hover .panel-title,
+        .heat > summary:hover .panel-title { color: var(--accent); }
         .history-body { padding: 0 18px 18px; }
         .history-tools {
             display: flex;
@@ -810,6 +816,73 @@
         }
         th.sortable.asc::after  { content: '▲'; opacity: 1; color: var(--accent); }
         th.sortable.desc::after { content: '▼'; opacity: 1; color: var(--accent); }
+
+        /* ── Start-date heatmap ──
+           Same disclosure pattern as the purchase history, but it lives inside
+           the results column so it sits directly under the averaging card. */
+        .heat { grid-area: heat; }
+        .heat-body { padding: 0 18px 18px; }
+        .heat-intro {
+            margin: 0 0 12px;
+            font-size: 12.5px;
+            line-height: 1.6;
+            color: var(--faint);
+        }
+        .heat-readout { min-height: 40px; margin-bottom: 8px; }
+        .heat-box { position: relative; overflow-x: auto; }
+        /* Scrolling — vertical and, on a phone, horizontal across the grid —
+           stays with the browser. A tap still reads a cell. */
+        /* Wider than the panel when the months won't fit: .heat-box scrolls it.
+           The global `canvas { max-width: 100% }` would squash that instead. */
+        #heatCanvas { display: block; width: 100%; max-width: none; }
+        #heatCanvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .heat-bar { height: 4px; margin: 6px 0 2px; }
+        .heat-legend { margin-top: 12px; }
+        .heat-ramp {
+            display: block;
+            width: 100%;
+            height: 10px;
+            border-radius: 3px;
+            border: 1px solid var(--border);
+        }
+        .heat-ticks {
+            display: flex;
+            justify-content: space-between;
+            gap: 6px;
+            margin-top: 5px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.04em;
+            color: var(--faint);
+        }
+        /* The readable twin of the canvas: every figure the colours encode, as
+           text, so nothing is gated behind a hover the keyboard can't perform. */
+        .heat-rows { margin: 14px 0 0; padding: 0; list-style: none; }
+        .heat-rows li {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 2px 10px;
+            padding: 7px 0;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: var(--muted);
+            border-top: 1px solid var(--border);
+        }
+        .heat-rows b {
+            flex: 0 0 auto;
+            min-width: 62px;
+            color: var(--text);
+            font-weight: 650;
+        }
+        .heat-rows span { min-width: 0; }
+        .heat-rows i {
+            font-style: normal;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+        }
+        .heat-rows i.up   { color: var(--live); }
+        .heat-rows i.down { color: var(--down); }
 
         /* ── Chart ── */
         .chart-panel { grid-area: chart; padding: 16px 18px 12px; }
@@ -875,7 +948,7 @@
                number visibly moves while the start date is being dragged. */
             .workspace {
                 grid-template-columns: minmax(0, 1fr);
-                grid-template-areas: "hero" "controls" "tiles" "chart" "effect" "note";
+                grid-template-areas: "hero" "controls" "tiles" "chart" "effect" "heat" "note";
             }
             .controls { position: static; }
         }
@@ -891,6 +964,9 @@
             .chart-panel { padding: 14px 12px 10px; }
             .chart-box { height: 260px; }
             .history > summary, .history-body { padding-left: 14px; padding-right: 14px; }
+            .heat > summary, .heat-body { padding-left: 14px; padding-right: 14px; }
+            .heat-ticks { font-size: 9.5px; }
+            .heat-rows b { min-width: 56px; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -1093,6 +1169,36 @@
             <p class="effect-note" id="effNote"></p>
         </section>
 
+        <details class="panel heat result-area" id="heatPanel">
+            <summary>
+                <span class="panel-title">Did your start date matter?</span>
+                <span class="sub">Annualised return for every start month, by how long you held</span>
+            </summary>
+            <div class="heat-body">
+                <p class="heat-intro">
+                    Each square is a plan of its own: start buying that month on your current schedule,
+                    hold for the period on the left, stop. The colour is that plan&rsquo;s money-weighted
+                    annualised return &mdash; the same figure the tiles report. Rates don&rsquo;t depend on
+                    how much goes in, so changing your contribution or your employer match moves nothing
+                    here; changing the frequency, or whether dividends are reinvested, does.
+                </p>
+                <div class="heat-readout">
+                    <span class="sub readout-date" id="heatReadoutDate">&nbsp;</span>
+                    <div class="readout" id="heatReadout"></div>
+                    <div class="bar heat-bar" id="heatBarWrap" hidden><i id="heatBar"></i></div>
+                </div>
+                <div class="heat-box">
+                    <canvas id="heatCanvas" tabindex="0" role="img"
+                            aria-label="Annualised return for every start month, by holding period. Use the arrow keys to read individual cells; the list below summarises each row."></canvas>
+                </div>
+                <div class="heat-legend" aria-hidden="true">
+                    <i class="heat-ramp" id="heatRamp"></i>
+                    <div class="heat-ticks" id="heatTicks"></div>
+                </div>
+                <ul class="heat-rows" id="heatRows"></ul>
+            </div>
+        </details>
+
         <p class="result-note">
             One historical window, not a forecast. A short window mostly measures where the
             price happened to be when you started &mdash; the case for DCA rests on
@@ -1220,6 +1326,13 @@ const historyPanel  = document.getElementById('historyPanel');
 const historyCount  = document.getElementById('historyCount');
 const historyBasisEl = document.getElementById('historyBasis');
 const historyTableEl = document.getElementById('historyTable');
+const heatPanel     = document.getElementById('heatPanel');
+const heatCanvas    = document.getElementById('heatCanvas');
+const heatReadoutEl = document.getElementById('heatReadout');
+const heatReadDateEl= document.getElementById('heatReadoutDate');
+const heatRowsEl    = document.getElementById('heatRows');
+const heatBarWrap   = document.getElementById('heatBarWrap');
+const heatBarEl     = document.getElementById('heatBar');
 const tableBody     = document.querySelector('#historyTable tbody');
 const dataStatusEl  = document.getElementById('dataStatus');
 const noteBasisEl   = document.getElementById('noteBasis');
@@ -1341,17 +1454,20 @@ const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').mat
  * for the rate that actually discounts these flows to zero.
  *
  * flows: [{ when: Date, amount: number }]  contributions negative, final value positive.
+ * `guess` is the starting rate for Newton (0.1 = 10%/yr). The heatmap hands it the
+ * previous cell's answer, which is usually within a point or two and cuts the
+ * iteration count; it only moves the starting point, never the root.
  * Returns a percentage, or null if it cannot converge (which is a real possibility
  * for deeply negative portfolios — the caller must handle null).
  */
-function xirr(flows) {
+function xirr(flows, guess = 0.1) {
     if (flows.length < 2) return null;
     const t0   = flows[0].when.getTime();
     const yrs  = (f) => (f.when.getTime() - t0) / (365.25 * 24 * 3600 * 1000);
     const npv  = (r) => flows.reduce((s, f) => s + f.amount / Math.pow(1 + r, yrs(f)), 0);
 
     // Newton–Raphson with a numeric derivative, then bisection as a fallback.
-    let rate = 0.1;
+    let rate = Number.isFinite(guess) && guess > -0.99 ? guess : 0.1;
     for (let i = 0; i < 100; i++) {
         const f0 = npv(rate);
         if (!isFinite(f0)) break;
@@ -1628,6 +1744,7 @@ function maybeRevalidate(k, key, a) {
         // place — the figures move, nothing is cleared and nothing jumps.
         if (assetKey === k) {
             setDataChip(fresh, a);
+            resetHeatmap();   // the grid was built from the series just replaced
             await run();
         }
     })()
@@ -1697,6 +1814,7 @@ async function applyAsset({ plan = null } = {}) {
     lastResult    = null;
     lastPurchases = [];
     resetSortState();
+    resetHeatmap();
 
     await initPage();
 }
@@ -1859,6 +1977,7 @@ function showUnavailable(msg) {
     workspace.classList.remove('is-stale');
     workspace.classList.add('is-empty');
     historyPanel.hidden     = true;
+    heatPanel.hidden        = true;
     heroValueEl.textContent = '—';
     heroDeltaEl.textContent = '';
     heroAsOfEl.textContent  = '';
@@ -1882,8 +2001,9 @@ function validatePlan(plan, a) {
 /** `endDate` is always "today" — no hardcoded cutoff — unless a caller pins it, for tests.
  *  `dividends` is [{ts, amount}] ascending, amount in dollars per share on that
  *  ex-dividend date; it is only read when plan.reinvest is on, and with it off (or
- *  the array empty) every figure returned is the price-only result. */
-function simulate(prices, plan, a, endDate = new Date(), dividends = []) {
+ *  the array empty) every figure returned is the price-only result.
+ *  `opts.guess` seeds the XIRR solve; only the heatmap passes it. */
+function simulate(prices, plan, a, endDate = new Date(), dividends = [], opts = {}) {
     const startDate      = new Date(plan.start);
     const frequencyDays  = plan.freq;
     const ownAmount      = plan.own;
@@ -2014,7 +2134,7 @@ function simulate(prices, plan, a, endDate = new Date(), dividends = []) {
 
     // Money-weighted annual return: contributions out, final value back in today.
     const finalDateObj = new Date(prices[finalIdx].ts * 1000);
-    const annual = xirr([...flows, { when: finalDateObj, amount: finalValue }]);
+    const annual = xirr([...flows, { when: finalDateObj, amount: finalValue }], opts.guess);
     const spanYears = (endDate - startDate) / (365.25 * 24 * 3600 * 1000);
 
     // Plain mean of the prices actually paid. With equal dollars per buy, average
@@ -2070,6 +2190,190 @@ function simulate(prices, plan, a, endDate = new Date(), dividends = []) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Start-date heatmap — pure grid builder. No DOM, no clock of its own.
+//
+// One cell is one whole plan: start in that month, buy on the current schedule,
+// stop after the row's holding period. Every cell goes through the same
+// simulate() the headline figures use, so the grid can never disagree with them.
+//
+// A cell is a *rate*, and a rate does not depend on how much goes in: scaling
+// every flow by k scales the NPV by k and leaves its root where it was. An
+// employer match is exactly such a scaling, so it drops out too. The grid is
+// therefore a function of (price history, dividends, frequency, reinvestment).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Row holding periods, in months: 1, 2, 3, 5 and 10 years. Months rather than
+ *  years so the tests can drive the same builder over a short fixture. */
+const HEAT_PERIODS = [12, 24, 36, 60, 120];
+
+/** The colour scale saturates here, symmetrically, in %/yr. It covers all but
+ *  about 1% of SPY's windows; letting the few 1-year outliers (which reach past
+ *  ±55%/yr) set the scale would flatten the band every long hold actually sits in. */
+const HEAT_CLAMP = 40;
+
+/** Every cell is simulated at this amount. Which one makes no difference — see above. */
+const HEAT_AMOUNT = 100;
+
+/** 'YYYY-MM-DD' plus n whole months, clamped to the target month's last day
+ *  (31 Jan + 1 month is 28 Feb, not 3 Mar). UTC throughout, like the engine. */
+function addMonthsIso(iso, months) {
+    const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7)), d = Number(iso.slice(8, 10));
+    const last = new Date(Date.UTC(y, m + months, 0)).getUTCDate();   // day 0 = last of the previous month
+    return new Date(Date.UTC(y, m - 1 + months, Math.min(d, last))).toISOString().split('T')[0];
+}
+
+/** A holding period in words: "1 year", "10 years", "3 months". */
+function periodLabel(months) {
+    if (months % 12 === 0) { const y = months / 12; return `${y} year${y === 1 ? '' : 's'}`; }
+    return `${months} month${months === 1 ? '' : 's'}`;
+}
+
+/** The same, for the grid's narrow row gutter: "1y", "10y", "3m". */
+function periodShort(months) {
+    return months % 12 === 0 ? `${months / 12}y` : `${months}m`;
+}
+
+/** ISO date of the latest close at or before `endDate` — the newest day a window
+ *  can be priced on. */
+function lastCloseIso(prices, endDate) {
+    const endUnix = Math.floor(endDate.getTime() / 1000);
+    let lo = 0, hi = prices.length - 1, idx = 0;
+    while (lo <= hi) {
+        const mid = (lo + hi) >>> 1;
+        if (prices[mid].ts <= endUnix) { idx = mid; lo = mid + 1; }
+        else                           { hi = mid - 1; }
+    }
+    return new Date(prices[idx].ts * 1000).toISOString().split('T')[0];
+}
+
+/**
+ * Rows and columns, with no cell values yet.
+ *
+ * Columns are calendar months from the asset's date floor (never earlier than the
+ * data itself) up to the last month the shortest row can still fill. A row is
+ * dropped outright when the data can't fill even its first window, and each row
+ * carries `count`: how many columns it reaches. Windows only move later as the
+ * start month does, so the columns a row can fill are always a leading run.
+ */
+function heatmapGeometry(prices, a, endDate = new Date(), periods = HEAT_PERIODS) {
+    const endIso   = lastCloseIso(prices, endDate);
+    const firstIso = new Date(prices[0].ts * 1000).toISOString().split('T')[0];
+    const floorIso = a.minDate > firstIso ? a.minDate : firstIso;
+
+    const shortest = Math.min(...periods);
+    const columns  = [];
+    let y = Number(floorIso.slice(0, 4));
+    let m = Number(floorIso.slice(5, 7));
+    for (;;) {
+        const month = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-01`;
+        // The first column starts on the floor itself, not on the 1st of its
+        // month: no plan on this page may begin before the date picker allows.
+        const start = columns.length === 0 ? floorIso : month;
+        if (addMonthsIso(start, shortest) > endIso) break;
+        columns.push({ start, month, year: y, label: fmtDate(month, DATE_MY) });
+        if (++m > 12) { m = 1; y++; }
+    }
+
+    const rows = [];
+    for (const months of periods) {
+        if (!columns.length || addMonthsIso(columns[0].start, months) > endIso) continue;
+        let count = 0;
+        while (count < columns.length && addMonthsIso(columns[count].start, months) <= endIso) count++;
+        rows.push({
+            months, count,
+            label: periodLabel(months),
+            short: periodShort(months),
+            cells: [],      // filled left to right; always a prefix of `count`
+            stats: null,
+        });
+    }
+
+    return {
+        freq: 0, reinvest: false, endIso, floorIso, columns, rows,
+        clamp: HEAT_CLAMP, amount: HEAT_AMOUNT,
+        cellCount: rows.reduce((s, r) => s + r.count, 0),
+    };
+}
+
+/** One cell: the money-weighted annualised return of a plan starting `startIso`,
+ *  buying every `freq` days, stopped `months` later. `null` when XIRR can't solve. */
+function heatmapCell(prices, a, startIso, months, freq, reinvest, dividends, guess) {
+    const end = new Date(`${addMonthsIso(startIso, months)}T00:00:00Z`);
+    try {
+        // `employer: 0` is stated rather than left out: the match only scales the
+        // flows, and an absent field would reach simulate() as undefined and make
+        // the contribution NaN. The cell runs the reinvestment the page is running.
+        const plan = { start: startIso, freq, own: HEAT_AMOUNT, employer: 0, reinvest };
+        return simulate(prices, plan, a, end, dividends, { guess }).annual;
+    } catch (_) {
+        return null;    // a window with nothing to fill at — guarded, not expected
+    }
+}
+
+/** worst / median / best / how many ended positive, over a row's solved cells. */
+function heatmapRowStats(cells) {
+    const ok = cells.filter(v => v != null && isFinite(v)).sort((x, z) => x - z);
+    if (!ok.length) return { count: 0, worst: null, median: null, best: null, positive: 0, positiveShare: null };
+    const mid = ok.length >> 1;
+    const positive = ok.filter(v => v > 0).length;
+    return {
+        count:  ok.length,
+        worst:  ok[0],
+        median: ok.length % 2 ? ok[mid] : (ok[mid - 1] + ok[mid]) / 2,
+        best:   ok[ok.length - 1],
+        positive,
+        positiveShare: positive / ok.length * 100,
+    };
+}
+
+/**
+ * A resumable pass over the grid. `step(budgetMs)` fills cells until the budget
+ * is spent and returns true once the grid is whole, so the caller can spread the
+ * work over frames and abandon it when the frequency or the dividend switch changes.
+ */
+function heatmapJob(prices, a, freq, reinvest, dividends, endDate = new Date(), periods = HEAT_PERIODS) {
+    const grid    = heatmapGeometry(prices, a, endDate, periods);
+    grid.freq     = freq;
+    grid.reinvest = !!reinvest;
+    let r = 0, guess = 0.1, computed = 0, finished = false;
+
+    return {
+        grid,
+        get done()     { return finished; },
+        get computed() { return computed; },
+        step(budgetMs) {
+            const t0 = performance.now();
+            while (r < grid.rows.length) {
+                const row = grid.rows[r];
+                if (row.cells.length >= row.count) {
+                    row.stats = heatmapRowStats(row.cells);
+                    r++;
+                    guess = 0.1;    // a new holding period is a new neighbourhood
+                    continue;
+                }
+                const rate = heatmapCell(prices, a, grid.columns[row.cells.length].start,
+                                         row.months, freq, reinvest, dividends, guess);
+                row.cells.push(rate);
+                computed++;
+                // Seed the next solve with this answer: neighbouring start months
+                // land close together, so Newton starts near the root.
+                if (rate != null && isFinite(rate)) guess = rate / 100;
+                if (performance.now() - t0 >= budgetMs) return false;
+            }
+            finished = true;
+            return true;
+        },
+    };
+}
+
+/** The whole grid in one go — what the tests and any non-interactive caller use. */
+function heatmapGrid(prices, a, freq, reinvest, dividends, endDate = new Date(), periods = HEAT_PERIODS) {
+    const job = heatmapJob(prices, a, freq, reinvest, dividends, endDate, periods);
+    while (!job.step(Infinity)) { /* one uninterrupted pass */ }
+    return job.grid;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Live results — every change re-runs the simulation; there is no Run button
 // ─────────────────────────────────────────────────────────────────────────────
 let runTimer   = 0;
@@ -2096,6 +2400,8 @@ async function run({ quick = false } = {}) {
         // Retrieve cached price data (already loaded by initPage)
         const { prices, dividends } = await loadPriceData();
         if (seq !== runSeq) return;             // superseded by a newer run
+        heatPrices    = prices;                 // the heatmap builds off the same series
+        heatDividends = dividends;
         const r = simulate(prices, plan, a, new Date(), dividends);
         errorDiv.textContent = '';
         render(r, plan, a, quick);
@@ -2131,6 +2437,13 @@ function render(r, plan, a, quick) {
     renderTiles(r, a);
     renderEffect(r, a);
     renderBasis(r);
+
+    // The heatmap depends on the schedule, the dividend switch and the price
+    // history only, so an amount, match or start-date change never recomputes
+    // it — runHeatmap() just repaints, to move the marker onto the new month.
+    heatPanel.hidden = false;
+    heatStart = plan.start;
+    if (heatPanel.open) runHeatmap(plan.freq, plan.reinvest);
 
     // History before the chart on purpose: if the Chart.js CDN is blocked or
     // fails, the table still updates instead of being skipped by the throw.
@@ -2567,6 +2880,386 @@ historyHead.addEventListener('keydown', (e) => {
     e.preventDefault();          // stop Space scrolling the page
     sortHistoryBy(th);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Start-date heatmap — the panel, the canvas and the readout
+//
+// The grid is thousands of simulate() calls, so it is built in frame-sized
+// chunks rather than in one blocking pass, cached per (frequency, reinvestment),
+// and never started until the panel is actually open.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** How long one chunk may hold the main thread: half a 60 Hz frame, so layout,
+ *  paint and the rest of the page still fit around it. The pass takes more
+ *  frames and the same total work. */
+const HEAT_BUDGET_MS = 8;
+
+let heatPaused    = 0;          // seq of a pass parked because the panel closed
+let heatPump      = null;       // that pass's pump, so reopening can resume it
+let heatPrices    = null;       // the series the grid is built from (set by run())
+let heatDividends = null;       // and the distributions that go with it
+const heatCache   = new Map();  // "<freq>|<reinvest>" → a finished grid
+let heatGrid      = null;       // what the canvas is drawing (may be partial)
+let heatJob       = null;       // the pass in flight, if any
+let heatKey       = null;       // the identity heatGrid/heatJob belong to
+let heatSeq       = 0;          // bumped to abandon a pass whose identity is gone
+let heatStart     = null;       // the visitor's own start date, for the marker
+let heatRaf       = 0;
+let heatBox       = null;       // pixel geometry of the last paint, for hit-testing
+let heatRampRGB   = null;       // the diverging ramp, read from the tokens once
+let heatObserver  = null;
+
+/** The grid's identity: the two things it actually depends on. */
+const heatKeyFor = (freq, reinvest) => `${freq}|${reinvest ? 'div' : 'price'}`;
+
+const PCT1 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1, signDisplay: 'exceptZero' });
+const PCT0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0, signDisplay: 'exceptZero' });
+
+/** An annualised rate, short enough for a grid readout: "+42.3%/yr",
+ *  "+1,205%/yr", and an em dash when XIRR could not solve. */
+function fmtRate(v, unit = '%/yr') {
+    if (v == null || !isFinite(v)) return '—';
+    return `${Math.abs(v) >= 100 ? PCT0.format(v) : PCT1.format(v)}${unit}`;
+}
+
+/** '#rgb' / '#rrggbb' / 'rgb(...)' → {r,g,b}. The tokens are hex; the fallback
+ *  is there because a computed value can come back in rgb() form. */
+function parseColor(css) {
+    const s = String(css).trim();
+    if (s.startsWith('#')) {
+        const h = s.length === 4 ? s.slice(1).replace(/./g, c => c + c) : s.slice(1);
+        return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+    }
+    const m = s.match(/[\d.]+/g) || ['0', '0', '0'];
+    return { r: Number(m[0]), g: Number(m[1]), b: Number(m[2]) };
+}
+const mixColor = (x, z, t) => ({ r: x.r + (z.r - x.r) * t, g: x.g + (z.g - x.g) * t, b: x.b + (z.b - x.b) * t });
+const rgbCss   = (c) => `rgb(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)})`;
+
+/** The diverging ramp, entirely from theme tokens: --down for losses, --live for
+ *  gains. The midpoint has to still read as a cell rather than as the card behind
+ *  it, so it is the raised surface lifted toward --faint — no new colour. */
+function heatColors() {
+    return {
+        down: parseColor(cssVar('--down')),
+        live: parseColor(cssVar('--live')),
+        mid:  mixColor(parseColor(cssVar('--bg-raised')), parseColor(cssVar('--faint')), 0.30),
+    };
+}
+
+/** A rate → its colour, clamped symmetrically at ±`clamp`. The exponent lifts
+ *  small magnitudes so a +5%/yr cell is still visibly not zero. */
+function heatColorFor(rate, clamp, ramp) {
+    if (rate == null || !isFinite(rate)) return null;
+    const t = Math.max(-1, Math.min(1, rate / clamp));
+    const e = Math.sign(t) * Math.pow(Math.abs(t), 0.65);
+    return e >= 0 ? mixColor(ramp.mid, ramp.live, e) : mixColor(ramp.mid, ramp.down, -e);
+}
+
+/** The column the visitor's own plan starts in, or -1 if it sits outside the grid. */
+function heatMarkerIndex(grid, startIso) {
+    if (!grid || !startIso || !grid.columns.length) return -1;
+    const first = grid.columns[0].month;
+    const j = (Number(startIso.slice(0, 4)) - Number(first.slice(0, 4))) * 12
+            + (Number(startIso.slice(5, 7)) - Number(first.slice(5, 7)));
+    return j >= 0 && j < grid.columns.length ? j : -1;
+}
+
+function queueHeatDraw() {
+    if (heatRaf) return;
+    heatRaf = requestAnimationFrame(drawHeatmap);
+}
+
+/** Repaint the whole canvas: cells, row gutter, year axis and the start marker.
+ *  Sized to the panel and to devicePixelRatio, so it stays crisp on any display. */
+function drawHeatmap() {
+    heatRaf = 0;
+    const grid = heatGrid;
+    if (!grid || !heatPanel.open || !grid.rows.length || !grid.columns.length) { heatBox = null; return; }
+
+    const wrapW  = Math.max(200, Math.round(heatCanvas.parentElement.clientWidth));
+    const small  = wrapW < 520;
+    const gutter = small ? 26 : 34;
+    const padTop = 10;                       // headroom for the start-month caret
+    const rowH   = small ? 22 : 28;
+    const axisH  = 18;
+    const cssH   = padTop + grid.rows.length * rowH + axisH;
+    // Below ~3px a column is unaimable and neighbouring months overpaint, so the
+    // canvas grows past the panel and .heat-box scrolls instead.
+    const cssW   = Math.max(wrapW, gutter + grid.columns.length * (small ? 3 : 1));
+    const cellW  = (cssW - gutter) / grid.columns.length;
+    const dpr    = Math.min(window.devicePixelRatio || 1, 3);
+
+    heatCanvas.width        = Math.round(cssW * dpr);
+    heatCanvas.height       = Math.round(cssH * dpr);
+    heatCanvas.style.width  = `${cssW}px`;
+    heatCanvas.style.height = `${cssH}px`;
+    const ctx = heatCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const ramp  = heatRampRGB ??= heatColors();
+    const empty = cssVar('--grid');
+    const faint = cssVar('--faint');
+    const mono  = cssVar('--font-mono');
+    const cellH = Math.max(6, rowH - 2);
+
+    grid.rows.forEach((row, i) => {
+        const y = padTop + i * rowH;
+        for (let j = 0; j < grid.columns.length; j++) {
+            if (j >= row.count)        ctx.fillStyle = empty;          // window runs past the last close
+            else if (j >= row.cells.length) continue;                  // not computed yet
+            else {
+                const c = heatColorFor(row.cells[j], grid.clamp, ramp);
+                ctx.fillStyle = c ? rgbCss(c) : empty;
+            }
+            // +0.6 so neighbouring cells overlap rather than leaving hairlines
+            ctx.fillRect(gutter + j * cellW, y + 1, Math.max(1, cellW) + 0.6, cellH);
+        }
+        ctx.fillStyle    = faint;
+        ctx.font         = `600 ${small ? 9.5 : 10.5}px ${mono}`;
+        ctx.textAlign    = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(row.short, 0, y + rowH / 2);
+    });
+
+    // Year ticks, thinned out until the labels have room to breathe
+    const axisY = padTop + grid.rows.length * rowH;
+    const step  = Math.max(1, Math.ceil((small ? 32 : 44) / Math.max(1, cellW * 12)));
+    ctx.font         = `${small ? 9.5 : 10.5}px ${mono}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'top';
+    grid.columns.forEach((col, j) => {
+        if (col.month.slice(5, 7) !== '01') return;
+        if ((col.year - grid.columns[0].year) % step !== 0) return;
+        const x = gutter + (j + 0.5) * cellW;
+        ctx.fillStyle = empty;
+        ctx.fillRect(x - 0.5, axisY, 1, 3);
+        ctx.fillStyle = faint;
+        const half = ctx.measureText(String(col.year)).width / 2 + 1;
+        ctx.fillText(String(col.year), Math.min(cssW - half, Math.max(gutter + half, x)), axisY + 5);
+    });
+
+    // The visitor's own start month, so they can see where their run sits
+    const mark = heatMarkerIndex(grid, heatStart);
+    if (mark >= 0) {
+        const accent = cssVar('--accent');
+        const x = gutter + mark * cellW;
+        const w = Math.max(2, cellW);
+        ctx.strokeStyle = accent;
+        ctx.lineWidth   = 1.5;
+        ctx.strokeRect(x - 0.75, padTop - 0.25, w + 1.5, grid.rows.length * rowH + 0.5);
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.moveTo(x + w / 2 - 4, padTop - 8);
+        ctx.lineTo(x + w / 2 + 4, padTop - 8);
+        ctx.lineTo(x + w / 2, padTop - 2);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    heatBox = { gutter, padTop, rowH, cellW, rows: grid.rows.length, cols: grid.columns.length };
+}
+
+/** Canvas pixels → a {i, j} cell, or null outside the grid. */
+function heatHit(px, py) {
+    const g = heatBox;
+    if (!g) return null;
+    const i = Math.floor((py - g.padTop) / g.rowH);
+    const j = Math.floor((px - g.gutter) / g.cellW);
+    return (i >= 0 && i < g.rows && j >= 0 && j < g.cols) ? { i, j } : null;
+}
+
+/** The line above the grid: the hovered cell, or a resting summary. Nothing here
+ *  is the only place a figure appears — the list below carries them as text. */
+function showHeatReadout(hit) {
+    const grid = heatGrid;
+    if (!grid) return;
+    if (!grid.rows.length || !grid.columns.length) {
+        heatReadDateEl.textContent = 'Not enough price history';
+        heatReadoutEl.innerHTML    = `<span>The shortest holding period needs more data than this series has.</span>`;
+        return;
+    }
+    if (!hit) {
+        const cadence = FREQ_PHRASE[grid.freq] ?? `every ${grid.freq} days`;
+        heatReadDateEl.textContent = `Every start month · ${grid.columns[0].label} – ${grid.columns[grid.columns.length - 1].label}`;
+        heatReadoutEl.innerHTML =
+              `<span><b>${grid.cellCount.toLocaleString('en-US')}</b>plans, buying ${cadence}</span>`
+            + `<span><b>${grid.reinvest ? 'With' : 'Without'}</b>dividends reinvested</span>`
+            + `<span><i class="key" style="--c:${cssVar('--accent')}"></i>Your start month</span>`
+            + `<span><b>&plusmn;${grid.clamp}%/yr</b>colour clamp</span>`;
+        return;
+    }
+    const row = grid.rows[hit.i];
+    const col = grid.columns[hit.j];
+    heatReadDateEl.textContent = `Started ${col.label} · held ${row.label}`;
+    if (hit.j >= row.count) {
+        heatReadoutEl.innerHTML = `<span><b>&mdash;</b>Not enough history: that window would run past ${fmtDate(grid.endIso)}</span>`;
+    } else if (hit.j >= row.cells.length) {
+        heatReadoutEl.innerHTML = `<span><b>&hellip;</b>Still computing</span>`;
+    } else {
+        const v = row.cells[hit.j];
+        heatReadoutEl.innerHTML = v == null
+            ? `<span><b>&mdash;</b>No annualised rate solves for this window</span>`
+            : `<span><b class="${v >= 0 ? 'up' : 'down'}">${fmtRate(v)}</b>Annualised, money-weighted</span>`;
+    }
+}
+
+/** The accessible twin of the canvas: every row's spread, as plain text. */
+function renderHeatRows(grid) {
+    const num = (v) => `<i class="${v >= 0 ? 'up' : 'down'}">${fmtRate(v)}</i>`;
+    let html = '';
+    for (const row of grid.rows) {
+        const s = row.stats;
+        if (!s || !s.count) continue;
+        html += `<li><b>${row.label}</b><span>`
+              + `worst ${num(s.worst)} &middot; median ${num(s.median)} &middot; best ${num(s.best)} &middot; `
+              + `<i>${Math.round(s.positiveShare)}%</i> of ${s.count.toLocaleString('en-US')} start months ended positive`
+              + `</span></li>`;
+    }
+    heatRowsEl.innerHTML = html
+        || '<li><span>The price history is too short to fill any of these holding periods.</span></li>';
+}
+
+/** The colour key, built from the same ramp the cells use. */
+function renderHeatLegend(grid) {
+    const ramp  = heatRampRGB ??= heatColors();
+    const stops = [];
+    for (let i = 0; i <= 10; i++) {
+        const t = -1 + i / 5;
+        stops.push(`${rgbCss(heatColorFor(t * grid.clamp, grid.clamp, ramp))} ${i * 10}%`);
+    }
+    document.getElementById('heatRamp').style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
+    document.getElementById('heatTicks').innerHTML =
+        [`≤ −${grid.clamp}%/yr`, `−${grid.clamp / 2}%`, '0', `+${grid.clamp / 2}%`, `≥ +${grid.clamp}%/yr`]
+            .map(t => `<span>${t}</span>`).join('');
+}
+
+let heatHover = false;   // true while a pointer is reading cells
+
+/** `done === null` hides the bar; anything else shows the pass's progress. */
+function heatProgress(done, total) {
+    if (done == null) { heatBarWrap.hidden = true; return; }
+    const pct = total ? (done / total) * 100 : 0;
+    heatBarWrap.hidden      = false;
+    heatBarEl.style.width   = `${pct}%`;
+    if (heatHover) return;   // the pointer owns the readout while it is over the grid
+    heatReadDateEl.textContent = `Running ${total.toLocaleString('en-US')} simulations…`;
+    heatReadoutEl.innerHTML    = `<span><b>${Math.round(pct)}%</b>done</span>`;
+}
+
+function heatSettled() {
+    heatProgress(null);
+    renderHeatLegend(heatGrid);
+    renderHeatRows(heatGrid);
+    showHeatReadout(null);
+    queueHeatDraw();
+}
+
+/**
+ * Build (or re-show) the grid for this (frequency, reinvestment). Cached per
+ * identity, so reopening the panel or flipping back to a pair already computed is
+ * instant. A change bumps heatSeq, which is how the pass in flight is abandoned.
+ */
+function runHeatmap(freq, reinvest) {
+    const key = heatKeyFor(freq, reinvest);
+    if (heatKey === key && (heatGrid || heatJob)) {
+        // A pass parked by closing the panel resumes here, where the identity
+        // has already been checked; anything else just repaints.
+        if (heatPaused === heatSeq && heatJob && heatPump) { heatPaused = 0; heatPump(); }
+        else queueHeatDraw();
+        return;
+    }
+    heatSeq++;
+    heatKey  = key;
+    heatJob  = null;
+    heatGrid = heatCache.get(key) ?? null;
+    if (heatGrid) { heatSettled(); return; }
+    if (!heatPrices || !heatPrices.length) return;
+
+    const seq = heatSeq;
+    let job;
+    try { job = heatmapJob(heatPrices, asset(), freq, reinvest, heatDividends); }
+    catch (err) { console.error('[dca] heatmap could not be built:', err); return; }
+
+    heatJob  = job;
+    heatGrid = job.grid;            // paint what is finished while the rest runs
+    heatRowsEl.innerHTML = '';
+    renderHeatLegend(job.grid);
+    heatProgress(0, job.grid.cellCount);
+
+    const pump = () => {
+        if (seq !== heatSeq) return;    // superseded: drop this pass on the floor
+        if (!heatPanel.open) { heatPaused = seq; return; }   // resumed when reopened
+        if (job.step(HEAT_BUDGET_MS)) {
+            heatCache.set(key, job.grid);
+            heatJob = null;
+            heatSettled();
+        } else {
+            heatProgress(job.computed, job.grid.cellCount);
+            queueHeatDraw();
+            requestAnimationFrame(pump);
+        }
+    };
+    heatPump = pump;            // so reopening the panel can resume this pass
+    requestAnimationFrame(pump);
+}
+
+/** Drop everything the grid knows — the price series behind it has changed. */
+function resetHeatmap() {
+    heatSeq++;
+    heatCache.clear();
+    heatPrices = heatDividends = heatGrid = heatJob = heatKey = null;
+    heatBox = null;
+    heatRowsEl.innerHTML = '';
+    heatProgress(null);
+}
+
+heatPanel.addEventListener('toggle', () => {
+    if (!heatPanel.open) return;
+    if (!heatObserver) {
+        heatObserver = new ResizeObserver(() => queueHeatDraw());
+        heatObserver.observe(heatCanvas.parentElement);
+    }
+    if (lastResult) runHeatmap(lastResult.plan.freq, lastResult.plan.reinvest);
+});
+
+// Pointer covers mouse and touch alike. Scrolling stays with the browser, so on
+// a phone a tap reads a cell and a drag scrolls the panel.
+const heatPoint = (e) => {
+    const rect = heatCanvas.getBoundingClientRect();
+    showHeatReadout(heatHit(e.clientX - rect.left, e.clientY - rect.top));
+};
+let heatFocus = null;   // the cell the keyboard is reading
+
+/** Move the keyboard's cell, clamped to what that row actually covers. */
+function heatSetFocus(i, j) {
+    const grid = heatGrid;
+    if (!grid || !grid.rows.length || !grid.columns.length) return;
+    const row = Math.min(grid.rows.length - 1, Math.max(0, i));
+    const col = Math.min(Math.max(0, grid.rows[row].count - 1), Math.max(0, j));
+    heatFocus = { i: row, j: col };
+    heatHover = true;       // the keyboard owns the readout just as the pointer does
+    showHeatReadout(heatFocus);
+}
+
+heatCanvas.addEventListener('keydown', (e) => {
+    const grid = heatGrid;
+    if (!grid || !grid.rows.length) return;
+    const cur  = heatFocus ?? { i: 0, j: Math.max(0, grid.rows[0].count - 1) };
+    const step = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] }[e.key];
+    if (step)                  { e.preventDefault(); heatSetFocus(cur.i + step[0], cur.j + step[1]); }
+    else if (e.key === 'Home') { e.preventDefault(); heatSetFocus(cur.i, 0); }
+    else if (e.key === 'End')  { e.preventDefault(); heatSetFocus(cur.i, Number.MAX_SAFE_INTEGER); }
+});
+heatCanvas.addEventListener('focus', () => { if (!heatFocus) heatSetFocus(0, Number.MAX_SAFE_INTEGER); });
+heatCanvas.addEventListener('blur',  () => { heatFocus = null; heatHover = false; showHeatReadout(null); });
+
+const heatLeave = () => { heatHover = false; showHeatReadout(null); };
+heatCanvas.addEventListener('pointermove', (e) => { heatHover = true; heatPoint(e); });
+heatCanvas.addEventListener('pointerdown', (e) => { heatHover = true; heatPoint(e); });
+heatCanvas.addEventListener('pointerleave',  heatLeave);
+heatCanvas.addEventListener('pointercancel', heatLeave);
 
 /** Chronological CSV of the last successful run, at full precision. */
 function downloadCsv() {
