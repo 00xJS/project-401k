@@ -421,6 +421,35 @@
         }
         .money input { padding-left: 24px; }
 
+        /* Dividend reinvestment: a checkbox that reads like the other control
+           labels, with the box beside the words rather than above them. */
+        .check {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin-bottom: 0;
+            padding: 5px 0;              /* a comfortable hit target */
+            font: inherit;               /* the global label rule is mono micro-caps */
+            font-size: 13px;             /* matches the frequency buttons */
+            letter-spacing: normal;
+            text-transform: none;
+            color: var(--muted);
+            cursor: pointer;
+        }
+        .check:hover { color: var(--text); }
+        .check input[type="checkbox"] {
+            flex: none;
+            width: 15px;
+            height: 15px;
+            margin: 0;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+        .check input[type="checkbox"]:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+
         /* Quick start dates: 1, 3, 5 and 10 years back, or SPY's full history */
         .presets {
             display: grid;
@@ -748,6 +777,9 @@
         /* Contained scroll with a sticky header. A 13-year weekly run is ~700 rows,
            which used to make the page ~30,000px tall. */
         .table-wrapper.is-scroll { max-height: 520px; overflow: auto; margin-top: 0; }
+        /* The dividend column only earns its width when dividends were reinvested. */
+        #historyTable .col-div { display: none; }
+        #historyTable.with-dividends .col-div { display: table-cell; }
         .is-scroll th {
             position: sticky;
             top: 0;
@@ -877,7 +909,7 @@
             <p class="lede">
                 <strong>Dollar-cost averaging</strong> — a fixed dollar amount, bought on a fixed schedule —
                 replayed against <span id="ledeAsset">real SPY closing prices</span>. A backtest, not a forecast.<br>
-                Set a <strong>start date</strong>, how <strong>often</strong> you contribute, how <strong>much</strong> and any <strong>employer match</strong> &mdash; every figure updates as you go.
+                Set a <strong>start date</strong>, how <strong>often</strong> you contribute, how <strong>much</strong>, any <strong>employer match</strong> and whether <strong>dividends</strong> are reinvested &mdash; every figure updates as you go.
             </p>
         </div>
 
@@ -923,9 +955,12 @@
             <ul>
                 <li>Purchases fill at <strong>SPY&rsquo;s actual closing price</strong> — what the SPDR
                     S&amp;P 500 ETF really traded at, adjusted for share splits.</li>
-                <li><strong>Dividends are left out entirely</strong> &mdash; neither reinvested nor counted
-                    as cash. SPY pays roughly 1&ndash;2% a year, so every figure here understates what a
-                    fund that reinvests its dividends would have earned.</li>
+                <li><strong>Dividends</strong> are a switch on the plan. With <em>Reinvest dividends</em>
+                    ticked &mdash; the default &mdash; every distribution buys more shares at the closing price
+                    on its <strong>ex-dividend date</strong>. A real fund reinvests on the later pay date, so
+                    this is an approximation of one, not a replica. Switched off, dividends are left out
+                    entirely, neither reinvested nor counted as cash: SPY pays roughly 1&ndash;2% a year, so
+                    every figure then understates what a dividend-reinvesting fund would have earned.</li>
                 <li>SPY&rsquo;s <strong>0.09% expense ratio</strong> is already reflected in its price,
                     so there is nothing further to deduct for it.</li>
             </ul>
@@ -998,6 +1033,14 @@
                     <input type="number" id="employerAmount" min="0" step="0.01" value="0" placeholder="0" inputmode="decimal">
                 </div>
             </div>
+            <!-- SPY's closes are not dividend-adjusted, so reinvestment is an explicit
+                 choice rather than something baked into the price series -->
+            <div class="ctl">
+                <label class="check" for="reinvest">
+                    <input type="checkbox" id="reinvest" checked>
+                    <span>Reinvest dividends</span>
+                </label>
+            </div>
 
             <div id="error" role="alert"></div>
         </form>
@@ -1054,7 +1097,7 @@
             One historical window, not a forecast. A short window mostly measures where the
             price happened to be when you started &mdash; the case for DCA rests on
             horizons measured in years. Drag the start date to watch the average cost move.
-            Dividends, fees, spreads and taxes are not included &mdash; figures are price return only.
+            <span id="noteBasis">Dividends, fees, spreads and taxes are not included &mdash; figures are price return only.</span>
         </p>
     </div><!-- /.workspace -->
 
@@ -1065,7 +1108,7 @@
         </summary>
         <div class="history-body">
             <div class="history-tools">
-                <span>Click a column to sort. <em>Value on Date</em> prices the stack at that row&rsquo;s close.</span>
+                <span>Click a column to sort. <em>Value on Date</em> prices the stack at that row&rsquo;s close.<span id="historyBasis"></span></span>
                 <button type="button" class="btn-ghost" id="csvBtn">Download CSV</button>
             </div>
             <div id="tableWrapper" class="table-wrapper is-scroll">
@@ -1076,6 +1119,7 @@
                             <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="date">Date</th>
                             <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="price"><span class="asset-price-label">SPY</span> Price</th>
                             <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="unitsBought"><span class="asset-unit-h">Shares</span> Bought</th>
+                            <th class="sortable col-div" scope="col" tabindex="0" aria-sort="none" data-col="dividendUnits">From Dividends</th>
                             <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="totalUnits">Total <span class="asset-unit-h">Shares</span></th>
                             <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="totalInvested">Total Invested</th>
                             <th class="sortable" scope="col" tabindex="0" aria-sort="none" data-col="portfolioValue">Value on Date</th>
@@ -1097,7 +1141,7 @@
         <p id="sourceCredit"></p>
         <div class="disclaimer">
             <strong>Not financial advice.</strong> This tool is for educational and informational purposes only.
-            Past performance does not guarantee future results, and the figures here exclude dividends, fees and taxes. <span id="assetRisk">Equity markets can
+            Past performance does not guarantee future results, and <span id="disclaimerBasis">the figures here exclude dividends, fees and taxes</span>. <span id="assetRisk">Equity markets can
             fall as well as rise</span> — always conduct your own research before making any investment decisions.
         </div>
     </footer>
@@ -1113,8 +1157,8 @@ const REVALIDATE_AFTER = 15 * 60 * 1000; // re-check the price file behind a cac
 
 /**
  * Everything asset-specific. The simulation itself is asset-agnostic — the price
- * file's schema is {generated, source, count, prices[{ts, price}]} with ts in UNIX
- * seconds — so the engine never needs to know what it is pricing.
+ * file's schema is {generated, source, count, prices[{ts, price}], dividends[{ts, amount}]}
+ * with ts in UNIX seconds — so the engine never needs to know what it is pricing.
  */
 const ASSETS = {
     spy: {
@@ -1160,6 +1204,7 @@ const startInput    = document.getElementById('startDate');
 const startSlider   = document.getElementById('startSlider');
 const amountInput   = document.getElementById('amount');
 const employerInput = document.getElementById('employerAmount');
+const reinvestInput = document.getElementById('reinvest');
 const errorDiv      = document.getElementById('error');
 const heroValueEl   = document.getElementById('heroValue');
 const heroDeltaEl   = document.getElementById('heroDelta');
@@ -1173,8 +1218,12 @@ const readoutDateEl = document.getElementById('readoutDate');
 const readoutEl     = document.getElementById('readout');
 const historyPanel  = document.getElementById('historyPanel');
 const historyCount  = document.getElementById('historyCount');
+const historyBasisEl = document.getElementById('historyBasis');
+const historyTableEl = document.getElementById('historyTable');
 const tableBody     = document.querySelector('#historyTable tbody');
 const dataStatusEl  = document.getElementById('dataStatus');
+const noteBasisEl   = document.getElementById('noteBasis');
+const disclaimerEl  = document.getElementById('disclaimerBasis');
 const statusTextEl  = document.getElementById('statusText');
 let   dcaChart;
 let   chartBuiltFor = '';           // "<asset>|<scale>" the live Chart instance was built for
@@ -1410,7 +1459,8 @@ async function fetchWithRetry(url, retries = 3, baseDelay = 1500, timeout = 1200
 // Price data — served from a pre-baked static file (no external API calls)
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Returns: { prices: [{ts, price}], latestPrice, fetchedAt, generatedAt, stale? }
+ * Returns: { prices: [{ts, price}], dividends: [{ts, amount}], latestPrice, fetchedAt,
+ *            generatedAt, stale? }
  *
  * Strategy:
  *  1. In-memory session cache        → instant
@@ -1469,6 +1519,7 @@ async function loadPriceData() {
     } catch (_) { /* corrupted storage – treat as missing */ }
 
     if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL) {
+        cached.dividends ??= [];   // written before dividends were cached at all
         sessionData[k] = cached;
         maybeRevalidate(k, key, a);
         return cached;
@@ -1490,6 +1541,7 @@ async function loadPriceData() {
 
         const result = {
             prices:      json.prices,
+            dividends:   json.dividends ?? [],   // absent from older files: price-only
             latestPrice: json.prices[json.prices.length - 1].price,
             fetchedAt:   Date.now(),
             generatedAt: json.generated ?? null,
@@ -1520,7 +1572,7 @@ async function loadPriceData() {
         const stale = cached ?? newestCachedEntry(a);
         if (stale) {
             console.warn(`Static file fetch failed (${apiErr.message}); falling back to cached data.`);
-            sessionData[k] = { ...stale, stale: true };
+            sessionData[k] = { dividends: [], ...stale, stale: true };
             return sessionData[k];
         }
         throw apiErr; // nothing cached — surface the error
@@ -1559,6 +1611,7 @@ function maybeRevalidate(k, key, a) {
 
         const fresh = {
             prices:      json.prices,
+            dividends:   json.dividends ?? [],
             latestPrice: json.prices[json.prices.length - 1].price,
             fetchedAt:   Date.now(),
             generatedAt: json.generated ?? null,
@@ -1630,6 +1683,7 @@ async function applyAsset({ plan = null } = {}) {
     setFrequency(plan?.freq || a.defaultFreq);
     if (plan?.amount) amountInput.value = plan.amount;
     if (plan?.employer) employerInput.value = plan.employer;
+    if (plan?.reinvest === false) reinvestInput.checked = false;
 
     // Start dimmed until the price data is in, with no rows, result or failed-load
     // state carried over
@@ -1663,6 +1717,8 @@ function readPlan() {
         own:      parseFloat(amountInput.value),
         // Employer match only applies to assets that opt in
         employer: asset().employer ? (parseFloat(employerInput.value) || 0) : 0,
+        // Reinvest distributions back into the fund, the way a 401(k) does
+        reinvest: reinvestInput.checked,
     };
 }
 
@@ -1690,7 +1746,7 @@ function syncTimeline() {
 }
 
 /** The shareable link for what is on screen: the bare page until the plan is
- *  touched, then start / freq / amt / match. One asset, so never ?asset=. */
+ *  touched, then start / freq / amt / match / div. One asset, so never ?asset=. */
 function planUrl() {
     const url = new URL(location.href);
     const qs  = url.searchParams;
@@ -1702,6 +1758,9 @@ function planUrl() {
         qs.set('amt', amountInput.value);
         if (plan.employer > 0) qs.set('match', employerInput.value);
         else                   qs.delete('match');
+        // Reinvestment is the default, so only its absence is worth carrying
+        if (plan.reinvest) qs.delete('div');
+        else               qs.set('div', '0');
     }
     return url;
 }
@@ -1741,6 +1800,7 @@ document.querySelector('.presets').addEventListener('click', (e) => {
 form.addEventListener('change', (e) => { if (e.target.name === 'frequency') planChanged('now'); });
 amountInput.addEventListener('input', () => planChanged('debounce'));
 employerInput.addEventListener('input', () => planChanged('debounce'));
+reinvestInput.addEventListener('change', () => planChanged('now'));
 
 async function copyLink() {
     planTouched = true;
@@ -1819,8 +1879,11 @@ function validatePlan(plan, a) {
     if (plan.employer < 0)          throw userError('Employer match cannot be negative.');
 }
 
-/** `endDate` is always "today" — no hardcoded cutoff — unless a caller pins it, for tests. */
-function simulate(prices, plan, a, endDate = new Date()) {
+/** `endDate` is always "today" — no hardcoded cutoff — unless a caller pins it, for tests.
+ *  `dividends` is [{ts, amount}] ascending, amount in dollars per share on that
+ *  ex-dividend date; it is only read when plan.reinvest is on, and with it off (or
+ *  the array empty) every figure returned is the price-only result. */
+function simulate(prices, plan, a, endDate = new Date(), dividends = []) {
     const startDate      = new Date(plan.start);
     const frequencyDays  = plan.freq;
     const ownAmount      = plan.own;
@@ -1844,23 +1907,57 @@ function simulate(prices, plan, a, endDate = new Date()) {
     // ── Simulate each purchase ──────────────────────────────────────────
     //    For each date, find the latest closing price at or before that date.
     //    prices[] is sorted ascending by ts.
-    let totalInvested = 0;
-    let totalOwn      = 0;
-    let totalEmployer = 0;
-    let totalUnits    = 0;
-    const purchases   = [];
-    const flows       = [];   // dated cash flows, for XIRR
+    let totalInvested  = 0;
+    let totalOwn       = 0;
+    let totalEmployer  = 0;
+    let purchasedUnits = 0;   // bought with contributions (and the match)
+    let dividendUnits  = 0;   // bought with reinvested distributions
+    let dividendCash   = 0;   // dollars those distributions paid out
+    const purchases    = [];
+    const flows        = [];   // dated cash flows, for XIRR
 
-    for (const date of purchaseDates) {
-        const unixTs = Math.floor(date.getTime() / 1000);
-
-        // Binary search: find the last price entry with ts <= unixTs
+    /** Index of the last price entry with ts <= unixTs, or -1 when the series
+     *  starts later. Purchases and dividends share it, so both price the same way. */
+    const closeIdxAt = (unixTs) => {
         let lo = 0, hi = prices.length - 1, idx = -1;
         while (lo <= hi) {
             const mid = (lo + hi) >>> 1;
             if (prices[mid].ts <= unixTs) { idx = mid; lo = mid + 1; }
             else                          { hi = mid - 1; }
         }
+        return idx;
+    };
+
+    // ── Dividends ───────────────────────────────────────────────────────
+    //    Opt-in, and only with a series to run against: without both, `divs` is
+    //    empty, nothing below it ever fires, and every figure is exactly the
+    //    price-only one. `dividends[]` is ascending by ts, like prices[].
+    const divs = (plan.reinvest && dividends?.length) ? dividends : [];
+    let divIdx = 0;
+
+    /** Pay and reinvest every dividend with an ex-date at or before `unixTs`,
+     *  valued at the close on or before that ex-date. Nothing is credited before
+     *  the first purchase — there are no shares to pay on — and a dividend
+     *  sharing a date with a purchase pays only on the shares held going into it,
+     *  since buying on the ex-date does not earn that distribution. */
+    const reinvestThrough = (unixTs) => {
+        while (divIdx < divs.length && divs[divIdx].ts <= unixTs) {
+            const d    = divs[divIdx++];
+            const held = purchasedUnits + dividendUnits;
+            if (held <= 0) continue;
+            const di = closeIdxAt(d.ts);
+            if (di < 0 || prices[di].price <= 0) continue;
+            const cash     = held * d.amount;
+            dividendCash  += cash;
+            dividendUnits += cash / prices[di].price;
+        }
+    };
+
+    for (const date of purchaseDates) {
+        const unixTs = Math.floor(date.getTime() / 1000);
+        reinvestThrough(unixTs);
+
+        const idx = closeIdxAt(unixTs);
         if (idx < 0 || prices[idx].price <= 0) continue;
 
         const price       = prices[idx].price;
@@ -1868,18 +1965,21 @@ function simulate(prices, plan, a, endDate = new Date()) {
         totalInvested    += investAmount;
         totalOwn         += ownAmount;
         totalEmployer    += employerAmount;
-        totalUnits       += unitsBought;
+        purchasedUnits   += unitsBought;
         flows.push({ when: new Date(date), amount: -investAmount });
 
+        // Every row carries the dividend shares accumulated up to its own date.
+        const unitsHeld = purchasedUnits + dividendUnits;
         purchases.push({
             n:             purchases.length + 1,
             date:          date.toISOString().split('T')[0],
             price,
             unitsBought,
-            totalUnits,
+            dividendUnits,
+            totalUnits:    unitsHeld,
             totalInvested,
-            portfolioValue: price * totalUnits,
-            profit:         price * totalUnits - totalInvested,
+            portfolioValue: price * unitsHeld,
+            profit:         price * unitsHeld - totalInvested,
         });
     }
 
@@ -1893,6 +1993,9 @@ function simulate(prices, plan, a, endDate = new Date()) {
 
     // ── Final metrics use the most recent available price ───────────────
     const endUnix    = Math.floor(endDate.getTime() / 1000);
+    // A distribution after the last purchase but inside the window still pays.
+    reinvestThrough(endUnix);
+    const totalUnits = purchasedUnits + dividendUnits;
     let lo2 = 0, hi2 = prices.length - 1, finalIdx = prices.length - 1;
     while (lo2 <= hi2) {
         const mid = (lo2 + hi2) >>> 1;
@@ -1903,7 +2006,10 @@ function simulate(prices, plan, a, endDate = new Date()) {
     const finalValue = totalUnits * finalPrice;
     const profit     = finalValue - totalInvested;
     const roi        = ((finalValue - totalInvested) / totalInvested * 100).toFixed(2);
-    const avgCost    = totalInvested / totalUnits;
+    // Deliberately per purchased share: "what your own money paid", which is what
+    // the averaging-effect card is about. Dividend shares cost nothing, so folding
+    // them in would turn it into a statement about yield instead.
+    const avgCost    = totalInvested / purchasedUnits;
     const duration   = calcDuration(startDate, endDate);
 
     // Money-weighted annual return: contributions out, final value back in today.
@@ -1920,6 +2026,26 @@ function simulate(prices, plan, a, endDate = new Date()) {
     //    purchase can sit days behind today. Extend both series to the latest
     //    close so the line ends on the same Portfolio Value the summary reports.
     //    No purchase is added — Total Invested stays flat across that last step.
+    const finalDate = new Date(prices[finalIdx].ts * 1000).toISOString().split('T')[0];
+
+    // A distribution after the last purchase would otherwise reach the totals
+    // without appearing in any row. Close the history with the stretch that
+    // bought nothing of its own but collected one.
+    const purchaseCount = purchases.length;
+    if (dividendUnits > purchases[purchases.length - 1].dividendUnits) {
+        purchases.push({
+            n:             purchases.length + 1,
+            date:          finalDate,
+            price:         finalPrice,
+            unitsBought:   0,
+            dividendUnits,
+            totalUnits,
+            totalInvested,
+            portfolioValue: finalValue,
+            profit:         finalValue - totalInvested,
+        });
+    }
+
     const labels       = purchases.map(p => p.date);
     const investedData = purchases.map(p => p.totalInvested);
     const valueData    = purchases.map(p => p.portfolioValue);
@@ -1927,7 +2053,6 @@ function simulate(prices, plan, a, endDate = new Date()) {
     //    Only extend when the latest close is genuinely AFTER the last purchase.
     //    If the last purchase already fell on (or after) that close, it is priced
     //    at the same number and appending would put the axis out of order.
-    const finalDate = new Date(prices[finalIdx].ts * 1000).toISOString().split('T')[0];
     if (finalDate > labels[labels.length - 1]) {
         labels.push(finalDate);
         investedData.push(totalInvested);
@@ -1936,6 +2061,9 @@ function simulate(prices, plan, a, endDate = new Date()) {
 
     return {
         purchases, totalInvested, totalOwn, totalEmployer, totalUnits, employerAmount,
+        purchasedUnits, dividendUnits, dividendCash, purchaseCount,
+        reinvested: dividendUnits > 0,   // what the window actually earned, not what was asked for
+        reinvestRequested: !!plan.reinvest,
         finalPrice, finalValue, profit, roi, avgCost, duration, annual, spanYears,
         meanPaid, finalDate, labels, investedData, valueData,
     };
@@ -1966,9 +2094,9 @@ async function run({ quick = false } = {}) {
         const plan = readPlan();
         validatePlan(plan, a);
         // Retrieve cached price data (already loaded by initPage)
-        const { prices } = await loadPriceData();
+        const { prices, dividends } = await loadPriceData();
         if (seq !== runSeq) return;             // superseded by a newer run
-        const r = simulate(prices, plan, a);
+        const r = simulate(prices, plan, a, new Date(), dividends);
         errorDiv.textContent = '';
         render(r, plan, a, quick);
         if (planTouched) syncUrl();
@@ -2002,12 +2130,19 @@ function render(r, plan, a, quick) {
     renderHero(r, plan, a, quick);
     renderTiles(r, a);
     renderEffect(r, a);
+    renderBasis(r);
 
     // History before the chart on purpose: if the Chart.js CDN is blocked or
     // fails, the table still updates instead of being skipped by the throw.
     lastPurchases = r.purchases;   // store for re-sorting and CSV
-    const n = r.purchases.length;
+    const n = r.purchaseCount;
     historyCount.textContent = `${n.toLocaleString('en-US')} purchase${n === 1 ? '' : 's'}`;
+    historyTableEl.classList.toggle('with-dividends', !!r.reinvested);
+    historyBasisEl.textContent = r.reinvested
+        ? (r.purchases.length > n
+            ? ' Total shares include reinvested dividends; the final row buys nothing and collects the distributions paid after your last purchase.'
+            : ' Total shares include shares bought by reinvested dividends.')
+        : '';
     queueHistory(quick);
 
     // Chart.js is a CDN dependency. If it is blocked or fails to parse, the
@@ -2054,7 +2189,7 @@ function renderHero(r, plan, a, quick) {
     heroDeltaEl.className   = `hero-delta ${up ? 'up' : 'down'}`;
     heroDeltaEl.textContent = `${up ? '▲' : '▼'} ${fmtSigned(r.profit)} · ${fmtPct(Number(r.roi))}`;
 
-    const n     = r.purchases.length;
+    const n     = r.purchaseCount;
     const match = r.employerAmount > 0 ? `, plus a ${fmtAmount(r.employerAmount)} employer match,` : '';
     heroStoryEl.innerHTML =
         `Buying <strong>${fmtAmount(plan.own)}</strong> of ${esc(a.ticker)}${match} ${FREQ_PHRASE[plan.freq]} `
@@ -2070,6 +2205,18 @@ function renderHero(r, plan, a, quick) {
     }, 700);
 }
 
+/** Both standing caveats have to stay true in either mode, so they say which
+ *  one is running rather than asserting one of them. */
+function renderBasis(r) {
+    noteBasisEl.innerHTML = r.reinvested
+        ? 'Dividends are reinvested at the close on each ex-dividend date; fees, spreads '
+          + 'and taxes are not included.'
+        : 'Dividends, fees, spreads and taxes are not included &mdash; figures are price return only.';
+    disclaimerEl.innerHTML = r.reinvested
+        ? 'the figures here include reinvested dividends but exclude fees and taxes'
+        : 'the figures here exclude dividends, fees and taxes';
+}
+
 function tile(label, value, sub, tone = '') {
     return `<div class="stat"><div class="label">${label}</div>`
          + `<div class="value ${tone}">${value}</div>`
@@ -2077,7 +2224,7 @@ function tile(label, value, sub, tone = '') {
 }
 
 function renderTiles(r, a) {
-    const n    = r.purchases.length;
+    const n    = r.purchaseCount;
     const tone = (x) => (x >= 0 ? 'up' : 'down');
     // Only meaningful once a reasonable span has elapsed — over a few weeks
     // XIRR annualises noise into absurd figures.
@@ -2087,15 +2234,25 @@ function renderTiles(r, a) {
         : `${n.toLocaleString('en-US')} purchase${n === 1 ? '' : 's'}`;
     tilesEl.innerHTML = [
         tile('Total invested', fmtMoney(r.totalInvested), invested),
-        tile('Total profit / loss', fmtSigned(r.profit), 'Unrealised, excl. dividends &amp; fees', tone(r.profit)),
+        tile('Total profit / loss', fmtSigned(r.profit),
+             r.reinvested ? 'Unrealised, incl. dividends, before fees'
+                          : 'Unrealised, excl. dividends &amp; fees', tone(r.profit)),
         tile('Return on investment', fmtPct(Number(r.roi)), 'Cumulative, whole period', tone(r.profit)),
         tile('Annualised return',
              annualOk ? fmtPct(r.annual) : '&mdash;',
              annualOk ? 'Money-weighted (XIRR)' : 'Shown once a run spans a year',
              annualOk ? tone(r.annual) : ''),
         tile(`Total ${a.unitHeader} accumulated`, `${fmtUnits(r.totalUnits)} <small>${a.unitPlural}</small>`,
-             `Latest close ${fmtUSD(r.finalPrice)}`),
-        tile(`Average cost per ${a.unitSingular}`, fmtUSD(r.avgCost), `Total invested &divide; ${a.unitPlural} held`),
+             r.reinvested
+                 ? `${fmtUnits(r.dividendUnits)} ${a.unitPlural} from dividends &middot; close ${fmtUSD(r.finalPrice)}`
+                 : r.reinvestRequested
+                     ? `No distribution in this window &middot; close ${fmtUSD(r.finalPrice)}`
+                     : `Latest close ${fmtUSD(r.finalPrice)}`),
+        // Always per share your own money bought: "÷ shares held" stops being true
+        // the moment a free dividend share lands in the stack.
+        tile(`Average cost per ${a.unitSingular}`, fmtUSD(r.avgCost),
+             r.reinvested ? `Total invested &divide; ${a.unitPlural} you bought`
+                          : `Total invested &divide; ${a.unitPlural} held`),
     ].join('');
 }
 
@@ -2316,6 +2473,7 @@ function renderHistoryTable(data) {
         const cls = p.profit >= 0 ? 'positive' : 'negative';
         html += `<tr><td class="num">${p.n}</td><td class="num">${p.date}</td>`
               + `<td class="num">${fmtUSD(p.price)}</td><td class="num">${fmtUnits(p.unitsBought)}</td>`
+              + `<td class="num col-div">${fmtUnits(p.dividendUnits ?? 0)}</td>`
               + `<td class="num">${fmtUnits(p.totalUnits)}</td><td class="num">${fmtUSD(p.totalInvested)}</td>`
               + `<td class="num">${fmtUSD(p.portfolioValue)}</td><td class="${cls}">${fmtUSD(p.profit)}</td></tr>`;
     }
@@ -2416,17 +2574,23 @@ function downloadCsv() {
     const a    = asset();
     const d    = a.decimals;
     const cell = (s) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
-    const head = ['#', 'Date', `${a.ticker} price (USD)`, `${a.unitHeader} bought`, `Total ${a.unitHeader}`,
+    // The dividend column appears only when dividends were reinvested, so a
+    // price-only export is exactly what it has always been.
+    const withDiv = !!lastResult.reinvested;
+    const head = ['#', 'Date', `${a.ticker} price (USD)`, `${a.unitHeader} bought`,
+                  ...(withDiv ? [`${a.unitHeader} from dividends`] : []), `Total ${a.unitHeader}`,
                   'Total invested (USD)', 'Value on date (USD)', 'Profit / loss (USD)'];
     const rows = lastPurchases.map(p => [
-        p.n, p.date, p.price.toFixed(2), p.unitsBought.toFixed(d), p.totalUnits.toFixed(d),
+        p.n, p.date, p.price.toFixed(2), p.unitsBought.toFixed(d),
+        ...(withDiv ? [(p.dividendUnits ?? 0).toFixed(d)] : []), p.totalUnits.toFixed(d),
         p.totalInvested.toFixed(2), p.portfolioValue.toFixed(2), p.profit.toFixed(2),
     ].join(','));
     const csv  = [head.map(cell).join(','), ...rows].join('\n') + '\n';
     const url  = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const link = document.createElement('a');
     link.href     = url;
-    link.download = `dca-${assetKey}-every-${lastResult.plan.freq}d-from-${lastResult.plan.start}.csv`;
+    link.download = `dca-${assetKey}-every-${lastResult.plan.freq}d-from-${lastResult.plan.start}`
+                  + `${lastResult.reinvested ? '-reinvested' : '-price-only'}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2435,7 +2599,7 @@ function downloadCsv() {
 document.getElementById('csvBtn').addEventListener('click', downloadCsv);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Boot — honour a shared plan (start, freq, amt, match), so every view is linkable.
+// Boot — honour a shared plan (start, freq, amt, match, div), so every view is linkable.
 // Any ?asset= param is ignored: this page prices one asset.
 // ─────────────────────────────────────────────────────────────────────────────
 (() => {
@@ -2446,6 +2610,7 @@ document.getElementById('csvBtn').addEventListener('click', downloadCsv);
     const num  = (k) => { const v = parseFloat(qs.get(k)); return Number.isFinite(v) ? v : NaN; };
     if (num('amt') >= 1)                                     plan.amount   = String(num('amt'));
     if (num('match') >= 0)                                   plan.employer = String(num('match'));
+    if (qs.get('div') === '0')                               plan.reinvest = false;
     planTouched = Object.keys(plan).length > 0;   // a shared plan stays in the URL
     syncScaleButtons();
     applyAsset({ plan });
