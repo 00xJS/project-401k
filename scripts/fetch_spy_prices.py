@@ -17,11 +17,15 @@ Output format:
     "generated": "2026-09-15T21:00:00Z",
     "source": "Yahoo Finance / yfinance — SPY daily closes (not dividend-adjusted)",
     "count": 8460,
-    "prices": [{"ts": 728265600, "price": 43.94}, ...]
+    "prices":    [{"ts": 728265600, "price": 43.94}, ...],
+    "dividends": [{"ts": 730425600, "amount": 0.213}, ...]
   }
 
-  ts    — Unix timestamp (UTC midnight of the trading date)
-  price — SPY closing price in USD, rounded to 2 decimal places
+  ts     — Unix timestamp (UTC midnight of the trading/ex-dividend date)
+  price  — SPY closing price in USD, rounded to 2 decimal places
+  amount — dividend per share in USD on its ex-dividend date. The closes above
+           are NOT dividend-adjusted, so the calculator can reinvest these
+           explicitly and also show the price-only figures.
 """
 
 import json
@@ -34,10 +38,11 @@ TICKER      = "SPY"
 START_DATE  = "1993-01-01"   # SPY began trading on 1993-01-29
 
 
-def fetch_spy_prices() -> list:
-    """Download SPY's full daily close history via yfinance.
+def fetch_spy_prices() -> tuple:
+    """Download SPY's full daily close and dividend history via yfinance.
 
-    Returns a list of {"ts": int, "price": float} dicts sorted ascending by ts.
+    Returns (prices, dividends): a list of {"ts": int, "price": float} and a list
+    of {"ts": int, "amount": float}, both sorted ascending by ts.
     """
     try:
         import yfinance as yf
@@ -54,7 +59,7 @@ def fetch_spy_prices() -> list:
     if hist.empty:
         raise ValueError(f"yfinance returned an empty DataFrame for {TICKER}")
 
-    prices = {}
+    prices, dividends = {}, {}
     for date, row in hist.iterrows():
         close = row["Close"]
         # Skip NaN or non-positive values
@@ -67,13 +72,19 @@ def fetch_spy_prices() -> list:
         )
         prices[int(dt.timestamp())] = round(float(close), 2)   # last row per day wins
 
+        # history() carries a Dividends column; non-zero rows are ex-dividend dates
+        div = row.get("Dividends", 0) or 0
+        if div and div == div and float(div) > 0:
+            dividends[int(dt.timestamp())] = round(float(div), 6)
+
     result = [{"ts": ts, "price": price} for ts, price in sorted(prices.items())]
-    print(f"  {len(result)} daily price points fetched")
-    return result
+    divs   = [{"ts": ts, "amount": amount} for ts, amount in sorted(dividends.items())]
+    print(f"  {len(result)} daily price points and {len(divs)} dividends fetched")
+    return result, divs
 
 
 def main() -> None:
-    prices = fetch_spy_prices()
+    prices, dividends = fetch_spy_prices()
 
     if not prices:
         print("ERROR: No price data returned. Aborting.")
@@ -88,12 +99,13 @@ def main() -> None:
         "source":    "Yahoo Finance / yfinance — SPY daily closes (not dividend-adjusted)",
         "count":     len(prices),
         "prices":    prices,
+        "dividends": dividends,
     }
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(json.dumps(output, separators=(",", ":")), encoding="utf-8")
 
-    print(f"Written {len(prices)} records to {OUTPUT_PATH}")
+    print(f"Written {len(prices)} prices and {len(dividends)} dividends to {OUTPUT_PATH}")
     print(f"Latest SPY close: ${prices[-1]['price']:,.2f} on {last_date}")
 
 

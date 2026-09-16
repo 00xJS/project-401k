@@ -8,9 +8,9 @@ This project replays that 401(k)-style plan against real historical prices for *
 
 ## Live Tool
 
-**[S&P 500 DCA Calculator](https://project401k.netlify.app/)** — a browser-based simulator. Set a start date, how often you contribute, how much, and an optional employer match, and the portfolio value, return figures, growth chart and full purchase history update live as you go.
+**[S&P 500 DCA Calculator](https://project401k.netlify.app/)** — a browser-based simulator. Set a start date, how often you contribute, how much, an optional employer match and whether dividends are reinvested, and the portfolio value, return figures, growth chart and full purchase history update live as you go.
 
-> **Dividends are not included.** The prices are SPY's actual traded closes — adjusted for splits, not for dividends — and the simulation never reinvests the roughly 1–2% a year SPY pays out. Every figure therefore understates what a 401(k) fund that reinvests its dividends would have earned over the same period, and the gap widens the longer the run.
+> **Dividends are reinvested by default.** The prices are SPY's actual traded closes — adjusted for splits, **not** for dividends — which is precisely what makes reinvestment something the model can do explicitly rather than assume. *Reinvest dividends* is on out of the box, because that is what a 401(k) fund does with a distribution. Untick it and every figure is price return only, which understates a long plan by roughly 1–2% a year. The page says which of the two it is showing, everywhere it matters.
 
 ## Data Source & Workflow
 
@@ -21,6 +21,7 @@ Price data is pre-baked static JSON committed to this repo — the browser never
 | Source | [Yahoo Finance `SPY`](https://finance.yahoo.com/quote/SPY/) via `yfinance` |
 | Coverage | 1993-01-29 (SPY's first trading day) → today (8,400+ daily closes) |
 | Prices | Actual closing prices in USD — split-adjusted, **not** dividend-adjusted |
+| Dividends | Cash distributions per share, by ex-dividend date — quarterly, 1993 → today |
 | Schedule | Weekdays, 21:00 UTC (after the US market close) |
 | Credentials | None — no API keys, no repo secrets |
 | Script | `scripts/fetch_spy_prices.py` |
@@ -91,13 +92,21 @@ That rewrites `data/spy-prices.json` in place — exactly what the scheduled Act
 {
   "generated": "2026-09-15T05:27:33Z",   // UTC build time
   "source":    "Yahoo Finance / yfinance — SPY daily closes (not dividend-adjusted)",
-  "count":     8463,
-  "prices":    [ { "ts": 728265600, "price": 43.94 } ]   // ts = UNIX SECONDS (UTC midnight of the trading date), ascending
+  "count":     8463,                                     // length of `prices` only
+  "prices":    [ { "ts": 728265600, "price": 43.94 } ],  // ts = UNIX SECONDS (UTC midnight of the trading date), ascending
+  "dividends": [ { "ts": 732499200, "amount": 0.213 } ]  // ts = UNIX SECONDS (UTC midnight of the EX-DIVIDEND date), ascending
 }
 ```
 
 `price` is SPY's closing price in USD, rounded to the cent. Days the market was closed
 have no entry; a purchase that lands on one fills at the most recent earlier close.
+
+`amount` is the cash distribution in USD **per share** with that ex-dividend date —
+SPY pays quarterly, so there are a few hundred entries against several thousand closes.
+Because the closes are not dividend-adjusted, the two arrays are independent: prices alone
+give price return, and the pair gives total return. `dividends` is optional — a consumer
+that ignores it, or an older copy of the file that predates it, still gets exactly the
+price-only result.
 
 ## Tests
 
@@ -118,7 +127,12 @@ code at the end of the script is cut off, so nothing fetches or renders.
   closed-form cases including one it cannot solve, the *averaging effect*
   invariant that average cost never exceeds the mean price paid, the guard that a
   purchase never fills at a close later than its own date, the start-date and
-  match rules, and the formatters.
+  match rules, and the formatters. A second set of goldens covers dividend
+  reinvestment: the purchased/dividend share split, the price basis, the window
+  edges (an ex-date before the first purchase, and one past the end date), a plan
+  whose window contains no distribution at all, and the regression guard that with
+  reinvestment off — or with no dividend series to run against, as an older
+  cached entry has — every figure is bit-for-bit the price-only one.
 - **`timezone.test.mjs`** — runs the same plans in child processes under `TZ=UTC`,
   `TZ=America/New_York` and `TZ=Australia/Sydney` and requires byte-identical
   output. The schedule steps with `setUTCDate()`; stepping in local time would
@@ -126,9 +140,10 @@ code at the end of the script is cut off, so nothing fetches or renders.
   onto the previous UTC day, filling it at the previous close.
 
 Every expectation runs against `tests/fixtures/prices.json` — a small, committed,
-deterministic series in the same schema as the real file — and against an end date
-passed into `simulate()`. Nothing depends on `data/spy-prices.json` or on today's
-date, so the weekday data job can never turn the suite red.
+deterministic series in the same schema as the real file, including a short quarterly
+`dividends` array — and against an end date passed into `simulate()`. Nothing depends on
+`data/spy-prices.json` or on today's date, so the weekday data job can never turn the
+suite red.
 
 
 ## DCA Simulation
@@ -141,8 +156,13 @@ The calculator supports:
 - **Your contribution**: any USD amount per purchase (defaults to $100)
 - **Employer match**: an additional USD amount per purchase, the way a 401(k) match accrues —
   reported separately from your own contributions
+- **Reinvest dividends**: a checkbox, **ticked by default**. Each SPY distribution buys more shares
+  at the closing price on its ex-dividend date; the shares it buys are tracked separately from the
+  ones your contributions bought, so *Average cost per share* keeps meaning what your own money paid
 - **Shareable plans**: once you change anything, the address bar links to exactly the plan on screen
-  (`?start=2000-01-03&freq=14&amt=100&match=50`), and *Copy link* puts it on the clipboard
+  (`?start=2000-01-03&freq=14&amt=100&match=50`), and *Copy link* puts it on the clipboard.
+  Reinvestment is the default, so only switching it **off** is carried, as `&div=0` — ordinary
+  links stay clean
 
 For each purchase date, the simulator binary-searches for the most recent SPY close **at or before** that date — never a later one, so the model can't look ahead — buys (contribution + match) ÷ price in fractional shares, and calculates:
 - Total invested, split into your contributions and the employer match
@@ -161,7 +181,9 @@ summary of the plan, then six KPI tiles, a chart of portfolio value against tota
 
 These are stated on the page too, under *How this works*, but they matter to anyone reading the numbers:
 
-- **Dividends are excluded.** SPY's closes are not dividend-adjusted, and the simulation never reinvests the ~1–2% a year SPY distributes. Over a multi-decade plan that compounds into a large gap, so read every figure as *price return only* — a floor for what a dividend-reinvesting 401(k) fund would have shown, not an estimate of it.
+- **Dividends are reinvested at the ex-dividend date's close**, when the toggle is on. SPY's closes are not dividend-adjusted, so each distribution in `data/spy-prices.json` is paid on the shares held going into its ex-date and immediately buys more at that day's close. A real fund reinvests on the later *pay date*, a few weeks after: this is an approximation of one, not a replica of it, and it will differ a little either way depending on what the price did in between. A purchase made on an ex-date earns nothing from that distribution — buying at the close is too late to be on the register.
+- **Switched off, dividends are excluded entirely** — neither reinvested nor counted as cash. SPY distributes ~1–2% a year, which over a multi-decade plan compounds into a large gap, so read those figures as *price return only*: a floor for what a dividend-reinvesting 401(k) fund would have shown, not an estimate of it.
+- **Average cost per share never counts dividend shares.** It is total invested ÷ shares your contributions bought, in both modes, so the *averaging effect* card keeps being about dollar-cost averaging rather than about yield. Total shares, portfolio value, profit, ROI and the annualised return all do include them.
 - **"Monthly" means every 30 days**, not the same calendar date — roughly 12.2 purchases a year, with the date drifting earlier over time. Weekly is 7 days, bi-weekly 14.
 - **No fees, spreads, or taxes.** Any commission, plan fee or bid–ask spread would reduce every figure. SPY's own 0.09% expense ratio is the exception — it is already reflected in the price. Nothing is ever sold, so profit is unrealised.
 - **Daily closes only** — each purchase fills at SPY's actual closing price on or before its date; intraday highs and lows are ignored, and fractional shares are assumed.
@@ -173,11 +195,13 @@ These are stated on the page too, under *How this works*, but they matter to any
 
 - **Live results** — every change re-runs the simulation; drag the start-date timeline and watch the numbers move
 - **401(k)-style employer match** — reported separately from your own contributions
+- **Dividend reinvestment** — on by default, at each ex-dividend date's close, with the shares it bought reported separately
 - **Presets and a timeline** — 1Y · 3Y · 5Y · 10Y · Max, or scrub the start date anywhere back to 1993
 - **Shareable links** — the URL encodes the whole plan
 - **Chart readout** — value, invested and ROI at whatever date the pointer is on, on a linear or log scale, with gain/loss shading between the lines
 - **Averaging effect** — average cost per share against the average price on your purchase dates
 - **Sortable history table** — every column sorts, by click or keyboard; the order survives live re-runs; exports to CSV
+- **Dividend shares are shown, not hidden** — when reinvesting, the history table and CSV carry a *From Dividends* column, and exports are named `…-reinvested.csv` or `…-price-only.csv`
 - **Always-current data** via an automated GitHub Actions pipeline, with localStorage caching keyed per day
 - **Staleness warning** — the header chip turns amber if the newest close is more than five days old, so weekends and a market holiday stay green
 - **Responsive, dark-only design** — works on desktop and mobile
@@ -185,4 +209,4 @@ These are stated on the page too, under *How this works*, but they matter to any
 
 ---
 
-**Disclaimer:** This tool is for educational and informational purposes only. Past performance does not guarantee future results, and the figures here exclude dividends, fees and taxes. Equity markets can fall as well as rise — always conduct your own research before making any investment decisions.
+**Disclaimer:** This tool is for educational and informational purposes only. Past performance does not guarantee future results, and the figures here exclude fees and taxes — and exclude dividends too, unless *Reinvest dividends* is ticked. Equity markets can fall as well as rise — always conduct your own research before making any investment decisions.

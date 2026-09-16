@@ -16,22 +16,26 @@ const END    = utc('2020-11-20');
 // Weekly from the first close spans both US daylight-saving changes of 2020
 // (8 March and 1 November); the other cadences land on different weekdays.
 const PLANS = [
-    { start: '2020-01-01', freq: 7,  own: 100, employer: 0   },
-    { start: '2020-02-29', freq: 14, own: 250, employer: 125 },
-    { start: '2020-03-07', freq: 7,  own: 75,  employer: 0   },
-    { start: '2020-03-08', freq: 30, own: 500, employer: 0   },
-    { start: '2020-10-25', freq: 7,  own: 50,  employer: 0   },
+    { start: '2020-01-01', freq: 7,  own: 100, employer: 0,   reinvest: true },
+    { start: '2020-02-29', freq: 14, own: 250, employer: 125, reinvest: true },
+    { start: '2020-03-07', freq: 7,  own: 75,  employer: 0,   reinvest: true },
+    { start: '2020-03-08', freq: 30, own: 500, employer: 0,   reinvest: true },
+    { start: '2020-10-25', freq: 7,  own: 50,  employer: 0,   reinvest: false },
 ];
 
 const results = PLANS.map((plan) => {
-    const r = engine.simulate(FIXTURE.prices, plan, SPY, END);
+    const r = engine.simulate(FIXTURE.prices, plan, SPY, END, FIXTURE.dividends);
     return {
         plan,
-        purchases:     r.purchases.map(p => `${p.date}@${p.price}`),
+        purchases:     r.purchases.map(p => `${p.date}@${p.price}+${(p.dividendUnits ?? 0).toFixed(8)}`),
         totalInvested: r.totalInvested,
         totalOwn:      r.totalOwn,
         totalEmployer: r.totalEmployer,
         totalUnits:    r.totalUnits,
+        purchasedUnits: r.purchasedUnits,
+        dividendUnits: r.dividendUnits,
+        dividendCash:  r.dividendCash,
+        purchaseCount: r.purchaseCount,
         finalPrice:    r.finalPrice,
         finalValue:    r.finalValue,
         roi:           r.roi,
