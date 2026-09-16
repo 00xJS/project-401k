@@ -1109,6 +1109,7 @@
 // Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 const CACHE_TTL  = 24 * 60 * 60 * 1000;  // 24 hours in ms
+const REVALIDATE_AFTER = 15 * 60 * 1000; // re-check the price file behind a cache hit
 
 /**
  * Everything asset-specific. The simulation itself is asset-agnostic — the price
@@ -1418,15 +1419,47 @@ async function fetchWithRetry(url, retries = 3, baseDelay = 1500, timeout = 1200
  *                                       rebuilt by a scheduled GitHub Action
  *  4. Stale localStorage              → fallback with warning
  *
+ * A cache hit is returned at once and then revalidated in the background once it
+ * is older than REVALIDATE_AFTER — see maybeRevalidate().
+ *
  * No API key. No external fetch from the browser. No CORS surface.
  */
+/** Drop this asset's stale date-scoped entries before writing a new one; without
+ *  this they accrete a full price file per visit-day until the quota errors.
+ *  Both the cold fetch and the background refresh write through it. */
+function pruneOldCacheKeys(a, key) {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if ((k?.startsWith(`${a.cachePrefix}_`) && k !== key) || k?.startsWith('sp500_dca_')) localStorage.removeItem(k);   // sp500_dca_*: this site's old ^GSPC cache
+    }
+}
+
+/** The newest cache entry this asset has, whatever day wrote it. The live key is
+ *  date-scoped, so without this the stale fallback below could never fire:
+ *  yesterday's data sits under yesterday's key. */
+function newestCachedEntry(a) {
+    let best = null;
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (!k?.startsWith(`${a.cachePrefix}_`)) continue;
+            const entry = JSON.parse(localStorage.getItem(k));
+            if (entry?.prices?.length && (!best || entry.fetchedAt > best.fetchedAt)) best = entry;
+        }
+    } catch (_) { /* corrupted or unavailable storage — treat as none */ }
+    return best;
+}
+
 async function loadPriceData() {
     const a   = asset();
     const key = cacheKey();
     const k   = assetKey;   // captured before the first await
 
     // 1. In-memory
-    if (sessionData[k]) return sessionData[k];
+    if (sessionData[k]) {
+        maybeRevalidate(k, key, a);
+        return sessionData[k];
+    }
 
     // 2. localStorage
     let cached = null;
@@ -1437,6 +1470,7 @@ async function loadPriceData() {
 
     if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL) {
         sessionData[k] = cached;
+        maybeRevalidate(k, key, a);
         return cached;
     }
 
@@ -1466,10 +1500,7 @@ async function loadPriceData() {
         // that they accrete a full price file per visit-day until the quota is hit.
         // Only this asset's prefix is swept, so other keys (the chart scale) survive.
         try {
-            for (let i = localStorage.length - 1; i >= 0; i--) {
-                const k = localStorage.key(i);
-                if ((k?.startsWith(`${a.cachePrefix}_`) && k !== key) || k?.startsWith('sp500_dca_')) localStorage.removeItem(k);   // sp500_dca_*: this site's old ^GSPC cache
-            }
+            pruneOldCacheKeys(a, key);
             localStorage.setItem(key, JSON.stringify(result));
         } catch (storageErr) {
             console.warn('localStorage write failed (quota?), cache skipped.', storageErr);
@@ -1479,13 +1510,98 @@ async function loadPriceData() {
         return result;
 
     } catch (apiErr) {
-        // 4. Fall back to stale cache rather than failing completely
-        if (cached) {
+        // A failed load counts as an attempt: without this, run() calls straight back
+        // in and maybeRevalidate fires a second full retry burst behind the fallback.
+        revalidatedAt = Date.now();
+
+        // 4. Fall back to stale cache rather than failing completely — today's key
+        //    holds nothing when today's fetch is what failed, so take the newest
+        //    entry this asset has.
+        const stale = cached ?? newestCachedEntry(a);
+        if (stale) {
             console.warn(`Static file fetch failed (${apiErr.message}); falling back to cached data.`);
-            sessionData[k] = { ...cached, stale: true };
+            sessionData[k] = { ...stale, stale: true };
             return sessionData[k];
         }
         throw apiErr; // nothing cached — surface the error
+    }
+}
+
+// One refresh in flight at a time, and at most one attempt per REVALIDATE_AFTER
+// even when it fails: run() calls loadPriceData() on every keystroke and slider
+// frame, so an un-throttled retry would turn a bad network into a fetch storm.
+let revalidating  = false;
+let revalidatedAt = 0;
+
+/**
+ * Stale-while-revalidate behind a cache hit.
+ *
+ * The cache key is date-scoped with a 24 h TTL, but the price file is rebuilt at
+ * 21:00 UTC — a visitor who loads before then would otherwise hold the older file
+ * for the rest of the day. The cached entry is still served instantly; this
+ * refetches behind it and swaps the data in only when `generated` actually moved.
+ *
+ * Never awaited, and every failure is swallowed: a revalidation that fails must
+ * leave the page exactly as it was.
+ */
+function maybeRevalidate(k, key, a) {
+    const entry = sessionData[k];
+    if (!entry || revalidating) return;
+    if ((Date.now() - Math.max(entry.fetchedAt, revalidatedAt)) < REVALIDATE_AFTER) return;
+    revalidating  = true;
+    revalidatedAt = Date.now();
+
+    (async () => {
+        const res  = await fetchWithRetry(`${a.dataUrl}?d=${new Date().toISOString().split('T')[0]}`);
+        const json = await res.json();
+        // Same file: nothing to swap, and no reason to touch the page.
+        if (!json.prices?.length || json.generated === entry.generatedAt) return;
+
+        const fresh = {
+            prices:      json.prices,
+            latestPrice: json.prices[json.prices.length - 1].price,
+            fetchedAt:   Date.now(),
+            generatedAt: json.generated ?? null,
+        };
+        sessionData[k] = fresh;
+        try {
+            pruneOldCacheKeys(a, key);   // a tab open across UTC midnight lands on a new key
+            localStorage.setItem(key, JSON.stringify(fresh));
+        } catch (storageErr) {
+            console.warn('localStorage write failed (quota?), cache skipped.', storageErr);
+        }
+
+        // The chip initPage would have written, then the current plan re-run in
+        // place — the figures move, nothing is cleared and nothing jumps.
+        if (assetKey === k) {
+            setDataChip(fresh, a);
+            await run();
+        }
+    })()
+        .catch(err => console.warn(`Background price refresh failed (${err.message}); keeping the data on screen.`))
+        .finally(() => { revalidating = false; });
+}
+
+/** Describe a loaded price file in the header chip: latest close, its date, and
+ *  an amber warning once the data is stale. Shared by initPage() and the
+ *  background revalidation so both say the same thing the same way. */
+function setDataChip(data, a) {
+    const lastTs      = data.prices?.length
+        ? data.prices[data.prices.length - 1].ts
+        : null;
+    const dataAgeMs   = lastTs ? (Date.now() - lastTs * 1000) : Infinity;
+    const isStale     = data.stale || dataAgeMs > a.staleAfterDays * 24 * 60 * 60 * 1000;
+    // Name what the number is. Unlabelled, "SPY $760.88" reads as a live
+    // ticker; it is the most recent daily close and can be days behind.
+    const genLabel    = lastTs
+        ? `latest close ${new Date(lastTs * 1000).toISOString().split('T')[0]}`
+        : `cached ${ageLabel(Date.now() - data.fetchedAt)}`;
+    const priceLabel  = `${a.mark}<strong>${fmtUSD(data.latestPrice)}</strong>`;
+    if (isStale) {
+        setStatus('stale',
+            `${priceLabel}&ensp;&bull;&ensp;${genLabel} &mdash; may be outdated`);
+    } else {
+        setStatus('ok', `${priceLabel}&ensp;&bull;&ensp;${genLabel}`);
     }
 }
 
@@ -1667,23 +1783,7 @@ async function initPage() {
     setStatus('loading', `Loading ${a.name} price data&hellip;`);
     try {
         const data     = await loadPriceData();
-        const lastTs      = data.prices?.length
-            ? data.prices[data.prices.length - 1].ts
-            : null;
-        const dataAgeMs   = lastTs ? (Date.now() - lastTs * 1000) : Infinity;
-        const isStale     = data.stale || dataAgeMs > a.staleAfterDays * 24 * 60 * 60 * 1000;
-        // Name what the number is. Unlabelled, "SPY $760.88" reads as a live
-        // ticker; it is the most recent daily close and can be days behind.
-        const genLabel    = lastTs
-            ? `latest close ${new Date(lastTs * 1000).toISOString().split('T')[0]}`
-            : `cached ${ageLabel(Date.now() - data.fetchedAt)}`;
-        const priceLabel  = `${a.mark}<strong>${fmtUSD(data.latestPrice)}</strong>`;
-        if (isStale) {
-            setStatus('stale',
-                `${priceLabel}&ensp;&bull;&ensp;${genLabel} &mdash; may be outdated`);
-        } else {
-            setStatus('ok', `${priceLabel}&ensp;&bull;&ensp;${genLabel}`);
-        }
+        setDataChip(data, a);
         dataReady = true;
         await run();
     } catch (err) {
@@ -1713,13 +1813,14 @@ function validatePlan(plan, a) {
     const startDate = new Date(plan.start);
     if (isNaN(startDate.getTime())) throw userError('Please enter a valid start date.');
     if (plan.start < a.minDate)     throw userError(`Pick a start date on or after ${fmtDate(a.minDate)}.`);
-    if (startDate >= new Date())    throw userError('Your start date must be before today.');
+    if (plan.start > todayStr())    throw userError("Start date can't be in the future.");
     // `!(x >= 1)`, not `x < 1`: an emptied field parses to NaN, and NaN < 1 is false
     if (!(plan.own >= 1))           throw userError('Enter an amount of $1 or more per purchase.');
     if (plan.employer < 0)          throw userError('Employer match cannot be negative.');
 }
 
-function simulate(prices, plan, a) {
+/** `endDate` is always "today" — no hardcoded cutoff — unless a caller pins it, for tests. */
+function simulate(prices, plan, a, endDate = new Date()) {
     const startDate      = new Date(plan.start);
     const frequencyDays  = plan.freq;
     const ownAmount      = plan.own;
@@ -1727,14 +1828,17 @@ function simulate(prices, plan, a) {
     // too so a stale value can't leak in.
     const employerAmount = a.employer ? plan.employer : 0;
     const investAmount   = ownAmount + employerAmount;
-    const endDate        = new Date(); // always "today" — no hardcoded cutoff
 
     // ── Generate purchase schedule ──────────────────────────────────────
     const purchaseDates = [];
     const cursor = new Date(startDate);
     while (cursor <= endDate) {
         purchaseDates.push(new Date(cursor));
-        cursor.setDate(cursor.getDate() + frequencyDays);
+        // UTC arithmetic: plan.start parses to UTC midnight, and setDate()/getDate()
+        // would step it in *local* time. Across a daylight-saving change that shifts
+        // every later purchase by an hour, which can roll one back onto the previous
+        // UTC day and fill it at the previous close. setUTCDate() can't drift.
+        cursor.setUTCDate(cursor.getUTCDate() + frequencyDays);
     }
 
     // ── Simulate each purchase ──────────────────────────────────────────
