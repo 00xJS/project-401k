@@ -133,6 +133,14 @@ code at the end of the script is cut off, so nothing fetches or renders.
   whose window contains no distribution at all, and the regression guard that with
   reinvestment off — or with no dividend series to run against, as an older
   cached entry has — every figure is bit-for-bit the price-only one.
+- **`heatmap.test.mjs`** — the start-date heatmap's grid builder: that a cell is
+  `simulate()`'s own `annual` for the same plan (and reports the same "no rate
+  solves" where `simulate()` does), that a cell is unchanged by the contribution
+  amount or the employer match, that reinvestment moves every cell it touches
+  upward and leaves a window with no ex-date in it alone, the row and column
+  geometry (a holding period the data cannot fill is dropped whole; no cell's
+  window runs past the last close), and the per-row worst / median / best /
+  share-positive figures against hand-worked values, in both dividend modes.
 - **`timezone.test.mjs`** — runs the same plans in child processes under `TZ=UTC`,
   `TZ=America/New_York` and `TZ=Australia/Sydney` and requires byte-identical
   output. The schedule steps with `setUTCDate()`; stepping in local time would
@@ -175,7 +183,41 @@ For each purchase date, the simulator binary-searches for the most recent SPY cl
 
 Results update live — there is no Run button. The page leads with the portfolio value and a plain-English
 summary of the plan, then six KPI tiles, a chart of portfolio value against total invested, an
-**averaging effect** card, and a collapsible purchase history with sortable columns and CSV export.
+**averaging effect** card, a collapsible **start-date heatmap**, and a collapsible purchase history with
+sortable columns and CSV export.
+
+### The start-date heatmap
+
+*Did your start date matter?* — a collapsed panel under the averaging card, answering
+the question the rest of the tool keeps implying: how much of an outcome is the month
+you happened to begin, and how much of that fades as the holding period grows.
+
+Rows are holding periods of 1, 2, 3, 5 and 10 years; a period the price history cannot
+fill even once is dropped rather than shown empty. Columns are every calendar month
+from the 1993 floor up to the last month whose window still finishes on or before the
+newest close — so the grid's right edge is ragged, and the longer the hold, the sooner
+it stops. Each cell is a whole plan of its own, run through the same `simulate()` the
+headline figures use, and coloured by its money-weighted annualised return on a
+diverging scale clamped symmetrically at ±40%/yr — wide enough for all but about 1% of
+SPY's windows. Your own start month is outlined in the accent colour.
+
+**A cell does not depend on how much goes in.** Scaling every contribution — or adding
+an employer match on top of it — scales the cash flows by the same factor and leaves the
+rate that discounts them to zero exactly where it was, so the grid is a function of the
+price history, the frequency and the dividend switch alone. Changing the amount, the
+match or the start date repaints it (to move the marker) but never recomputes it;
+changing the frequency, or *Reinvest dividends*, does recompute, and abandons any pass
+still in flight. Each (frequency, reinvestment) pair's finished grid is cached, so going
+back to one is instant.
+
+Building it is around 1,770 simulations on the SPY series (and one more column every
+month), so it runs in frame-sized chunks rather than one blocking pass, seeding each
+XIRR solve with the previous cell's answer to cut Newton's iterations. Nothing is
+computed until the panel is first opened. Below the canvas, each row's worst, median and
+best outcome and the share of start months that ended positive are written out as text —
+the canvas itself is a
+labelled `role="img"` that takes focus, so the arrow keys walk it cell by cell and the
+colour key is `aria-hidden` — no figure is ever reachable by hover alone.
 
 ### What the model assumes
 
@@ -200,6 +242,7 @@ These are stated on the page too, under *How this works*, but they matter to any
 - **Shareable links** — the URL encodes the whole plan
 - **Chart readout** — value, invested and ROI at whatever date the pointer is on, on a linear or log scale, with gain/loss shading between the lines
 - **Averaging effect** — average cost per share against the average price on your purchase dates
+- **Start-date heatmap** — every start month since 1993 against holding periods of 1 to 10 years, coloured by annualised return, with each row's spread written out as text
 - **Sortable history table** — every column sorts, by click or keyboard; the order survives live re-runs; exports to CSV
 - **Dividend shares are shown, not hidden** — when reinvesting, the history table and CSV carry a *From Dividends* column, and exports are named `…-reinvested.csv` or `…-price-only.csv`
 - **Always-current data** via an automated GitHub Actions pipeline, with localStorage caching keyed per day
